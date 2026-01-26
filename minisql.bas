@@ -1,13 +1,13 @@
 REM ==============================================================
 REM  MINISQL.BAS  (LABEL-BASED / CHAINABLE)
-REM  Version: 0.3.24
+REM  Version: 0.3.25
 REM --------------------------------------------------------------
 REM  Uses COMMON + CHAIN library style. When this program ENDs,
 REM  control returns to the caller after CHAIN, with COMMON kept.
 REM
 REM  FILENAMES: underscores are NOT used. We use dashes:
 REM    <DB>-idx.dat   (schemas, index, metadata)
-REM    <DB>-db1.dat   (data, max 10KB per file)
+REM    <DB>-db1.dat   (data, max 256KB per file)
 REM    <DB>-db2.dat ...
 REM    <DB>-txn.dat   (transaction batch file)
 REM
@@ -17,8 +17,9 @@ REM
 REM  WATCHDOG SAFE: loops call SLEEP(0.25).
 REM
 REM  COMMON API:
-REM    SQL_CMD$    = "INITDB"|"EXEC"|"BEGIN"|"COMMIT"|"ROLLBACK"|"SEARCH"|"COMPACT"|"REINDEX"
-REM    SQL_DB$     = database prefix (we sanitize '_' -> '-' for filenames)
+REM    SQL_CMD$    = "INITDB"|"EXEC"|"BEGIN"|"COMMIT"
+REM                  "ROLLBACK"|"SEARCH"|"COMPACT"|"REINDEX"
+REM    SQL_DB$     = database prefix (sanitize '_' -> '-' filenames)
 REM    SQL_STMT$   = SQL statement (EXEC) or search spec (SEARCH)
 REM    SQL_MODE$   = "RW" default | "RO" read-only | "AO" append-only
 REM
@@ -30,13 +31,14 @@ REM ==============================================================
 REM Copyright 2025 by FARMER. ALL rights reserved
 
 START:
-    COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$, SQL_STATUS, SQL_MSG$
+    COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$
+    COMMON SQL_RESULT$, SQL_STATUS, SQL_MSG$
 
     SQL_STATUS = 0
     SQL_MSG$ = ""
     SQL_RESULT$ = ""
 
-    MAXFILE = 10240
+    MAXFILE = 262144
     YIELDSEC = 0.25
 
     CMD$ = UCASE$(TRIM$(SQL_CMD$))
@@ -103,19 +105,35 @@ MakeDBName:
     DBFN$ = DBPFX$ + "-db" + STR$(FN) + ".dat"
     RETURN
 
+REM ==============================================================
+REM  Ensure a file exists, creating it with OUTPUT when empty/missing
+REM ==============================================================
+EnsureFile:
+    REM IN: FNAME$
+    OPEN FNAME$ FOR INPUT AS #1
+    IF EOF(1) THEN
+        CLOSE #1
+        OPEN FNAME$ FOR OUTPUT AS #1
+        CLOSE #1
+        RETURN
+    END IF
+    CLOSE #1
+    RETURN
+
+
 
 REM ==============================================================
 REM  INITDB: create idx + db1 if missing, seed metadata if idx empty
 REM ==============================================================
 InitDB:
-    REM Create idx and db1 by APPEND open (creates file if missing)
-    OPEN IDXFN$ FOR APPEND AS #1
-    CLOSE #1
+    REM Create idx + db1 if missing (OUTPUT creates empty files)
+    FNAME$ = IDXFN$
+    GOSUB EnsureFile
 
     FN = 1
     GOSUB MakeDBName
-    OPEN DBFN$ FOR APPEND AS #1
-    CLOSE #1
+    FNAME$ = DBFN$
+    GOSUB EnsureFile
 
     REM Check if idx is empty
     EMPTY = 1
@@ -156,7 +174,7 @@ GetMeta:
     WHILE NOT EOF(1)
         INPUT #1, L$
         N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)   REM watchdog-safe
+        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)  REM watchdog-safe
         L$ = TRIM$(L$)
         IF INSTR(L$, "M|" + METAKEY$ + "|") = 1 THEN
             METAVAL$ = MID$(L$, LEN("M|" + METAKEY$ + "|") + 1)
@@ -277,7 +295,7 @@ FetchByPos:
 
 
 REM ==============================================================
-REM  Append record to current db file (rolls to next file at 10KB)
+REM  Append record to current db file (rolls at 256KB)
 REM  Updates idx with:
 REM    M|CUR|n, F|n|bytes, R|n|rec, I|table|key|n|rec
 REM ==============================================================
@@ -302,8 +320,8 @@ AppendRecord:
         CURFILE = CURFILE + 1
         FN = CURFILE
         GOSUB MakeDBName
-        OPEN DBFN$ FOR APPEND AS #1
-        CLOSE #1
+        FNAME$ = DBFN$
+        GOSUB EnsureFile
         CURB = 0
         NEWB = ADD
     END IF
@@ -335,7 +353,8 @@ ExecSQL:
     ST$ = TRIM$(SQL_STMT$)
     IF ST$ = "" THEN SQL_STATUS = 11: SQL_MSG$="EMPTY SQL": RETURN
 
-    REM If txn is active, queue statements (except SELECT allowed to run)
+    REM If txn is active, queue statements
+    REM (except SELECT allowed to run)
     METAKEY$ = "TXN": GOSUB GetMeta
     TXNFLAG = VAL(METAVAL$)
 
@@ -561,7 +580,7 @@ DoSelect:
             PFN = VAL(LEFT$(POS$, C-1))
             PRN = VAL(MID$(POS$, C+1))
             IF PFN = 0 THEN GOTO NextRow
-            IF PFN <> FN OR PRN <> RN THEN GOTO NextRow   REM only latest version
+            IF PFN <> FN OR PRN <> RN THEN GOTO NextRow
 
             IF WCOL$ <> "" THEN
                 NEED$ = "|" + WCOL$ + "=" + WVAL$
@@ -866,7 +885,7 @@ TxnCommit:
 
 
 REM ==============================================================
-REM  COMPACT: rewrite idx with latest-wins only (schemas/meta/index/F/R)
+REM  COMPACT: rewrite idx with latest-wins (schemas/meta/index/F/R)
 REM ==============================================================
 CompactIdx:
     DIM SC{}
@@ -932,7 +951,8 @@ CompactIdx:
     IF META{"TXN"} <> "" THEN PRINT #1, "M|TXN|"; META{"TXN"}
 
     REM Write schemas
-    REM We don't have a built-in iterator spec here, so we re-scan the old idx
+    REM We don't have a built-in iterator spec here,
+    REM so we re-scan the old idx
     REM and output only when it matches the final map value (dedupe).
     OPEN IDXFN$ FOR INPUT AS #2
     N = 0
@@ -955,7 +975,8 @@ CompactIdx:
     WEND
     CLOSE #2
 
-    REM Write F/R and I similarly by rescanning and matching final maps
+    REM Write F/R and I similarly by rescanning
+    REM and matching final maps
     OPEN IDXFN$ FOR INPUT AS #2
     N = 0
     WHILE NOT EOF(2)
@@ -1052,7 +1073,8 @@ ReindexAll:
     PRINT #1, "M|CUR|"; CURFILE
     PRINT #1, "M|TXN|0"
 
-    REM Write schemas by rescanning old idx and matching SC map (dedupe)
+    REM Write schemas by rescanning old idx
+    REM and matching SC map (dedupe)
     OPEN IDXFN$ FOR INPUT AS #2
     N = 0
     WHILE NOT EOF(2)
