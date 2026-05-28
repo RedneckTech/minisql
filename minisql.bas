@@ -152,8 +152,13 @@ InitLog:
 
 REM ==============================================================
 REM  Log an event with label  (IN: LBL$, MSG$)
+REM  Uses OPT{"200"} (LOG_ENABLED) and OPT{"201"} (LOG_LEVEL)
+REM    LOG_LEVEL: 0=errors, 1=normal, 2=verbose
 REM ==============================================================
 LogEvent:
+    IF OPT{"200"} <> "1" THEN RETURN
+    LV = VAL(OPT{"201"})
+    IF LV = 0 AND LBL$ <> "ERROR" THEN RETURN
     PRINT #1, "EVENT|" + LBL$ + "|" + DATE$() + "T" + TIME$() + "|" + MSG$
     RETURN
 
@@ -183,27 +188,42 @@ REM ==============================================================
 REM  Schema helpers
 REM ==============================================================
 GetSchema:
-    REM IN: TBL$  OUT: COLS$, PK$
+    REM IN: TBL$  OUT: COLS$, PK$, SEQ
     COLS$ = ""
     PK$ = ""
+    SEQ = 0
     OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     GET #2, S{}, KEY = TBL$
     IF FOUND(2) THEN
         COLS$ = S{"cols"}
         PK$ = S{"pk"}
+        IF S{"seq"} <> "" THEN SEQ = VAL(S{"seq"})
     END IF
     CLOSE #2
     RETURN
 
 PutSchema:
-    REM IN: TBL$, COLS$, PK$
+    REM IN: TBL$, COLS$, PK$  (SEQ optional, default 1)
     OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     S{"name"} = TBL$
     S{"cols"} = COLS$
     S{"pk"} = PK$
+    S{"seq"} = "1"
     PUT #2, S{}
+    CLOSE #2
+    RETURN
+
+UpdateSeq:
+    REM IN: TBL$, new SEQ value
+    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    DIM S{}
+    GET #2, S{}, KEY = TBL$
+    IF FOUND(2) THEN
+        S{"seq"} = STR$(SEQ)
+        PUT #2, S{}
+    END IF
     CLOSE #2
     RETURN
 
@@ -335,7 +355,9 @@ DoCreate:
 
 
 REM ==============================================================
-REM  INSERT INTO t KEY k VALUES (v1,v2,...)
+REM  INSERT INTO t [KEY k|*] VALUES (v1,v2,...)
+REM  KEY optional — omitting or using KEY * auto-generates a
+REM  numeric key from the table's sequence counter.
 REM ==============================================================
 DoInsert:
     P = INSTR(UP$, "INTO")
@@ -352,17 +374,29 @@ DoInsert:
 
     PKPOS = INSTR(UCASE$(REST$), "KEY")
     IF PKPOS = 0 THEN
-        SQL_STATUS=42: SQL_MSG$="INSERT REQUIRES KEY"
-        RETURN
+        AUTO = 1
+        REST2$ = REST$
+    ELSE
+        TMP2$ = TRIM$(MID$(REST$, PKPOS+3))
+        SP2 = INSTR(TMP2$, " ")
+        IF SP2 = 0 THEN
+            SQL_STATUS=43: SQL_MSG$="INSERT REQUIRES VALUES"
+            RETURN
+        END IF
+        KEY$ = TRIM$(LEFT$(TMP2$, SP2-1))
+        IF KEY$ = "*" THEN
+            AUTO = 1
+        ELSE
+            AUTO = 0
+        END IF
+        REST2$ = TRIM$(MID$(TMP2$, SP2+1))
     END IF
-    TMP2$ = TRIM$(MID$(REST$, PKPOS+3))
-    SP2 = INSTR(TMP2$, " ")
-    IF SP2 = 0 THEN
-        SQL_STATUS=43: SQL_MSG$="INSERT REQUIRES VALUES"
-        RETURN
+
+    IF AUTO = 1 THEN
+        SEQ = SEQ + 1
+        KEY$ = STR$(SEQ)
+        GOSUB UpdateSeq
     END IF
-    KEY$ = TRIM$(LEFT$(TMP2$, SP2-1))
-    REST2$ = TRIM$(MID$(TMP2$, SP2+1))
 
     VPOS = INSTR(UCASE$(REST2$), "VALUES")
     IF VPOS = 0 THEN
