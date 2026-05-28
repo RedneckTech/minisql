@@ -1,4 +1,4 @@
-# MiniSQL User Manual (minisql.bas)
+# MiniSQL User Manual (minisql.bas) — v0.4.0
 
 MiniSQL is a tiny SQL-ish database engine designed for
 TIMESHARING BASIC / 3270BBS-style BASIC.
@@ -8,7 +8,7 @@ It is used like a **library**: your program sets `COMMON` variables and
 program when it finishes.
 
 This manual explains how to integrate MiniSQL, how storage works, and
-how to use every command (including COMPACT and REINDEX).
+how to use every command.
 
 ---
 
@@ -17,7 +17,7 @@ how to use every command (including COMPACT and REINDEX).
 - What MiniSQL Is
 - Limits and Design Goals
 - Files MiniSQL Creates
-- Storage Model
+- Storage Model (ISAM)
 - Calling Convention (COMMON + CHAIN)
 - Code Template (recommended)
 - Commands (with code examples)
@@ -25,16 +25,18 @@ how to use every command (including COMPACT and REINDEX).
   - EXEC
   - SEARCH
   - BEGIN / COMMIT / ROLLBACK
-  - COMPACT
-  - REINDEX
 - SQL-ish Statement Reference (with examples)
   - CREATE TABLE
   - INSERT
-  - SELECT (+ WHERE + LIMIT)
+  - SELECT (+ WHERE + ORDER BY + LIMIT)
   - UPDATE
   - REPLACE
   - DELETE
+  - DROP TABLE
+- SEARCH Modes: CONTAINS, EXACT, PREFIX, SUFFIX
 - Modes (RW / RO / AO)
+- Event Logging
+- Option Codes (configuration)
 - Results and Output Format (+ printing helpers)
 - Error Codes
 - Maintenance & Best Practices
@@ -47,12 +49,14 @@ how to use every command (including COMPACT and REINDEX).
 
 MiniSQL provides:
 
-- simple tables (schema stored in an index file)
-- insert/select/update/replace/delete
-- a basic index on a primary “KEY”
-- file rollover when data files hit 10KB
+- simple tables (schema stored in a system ISAM table)
+- insert/select/update/replace/delete/drop
+- ISAM-based primary key index on every table
 - transactions (queue statements, commit later)
-- maintenance commands (COMPACT / REINDEX)
+- event logging with timestamps
+- configurable option codes
+- search with CONTAINS, EXACT, PREFIX, SUFFIX matching
+- ORDER BY with ascending/descending sort
 
 MiniSQL is not full SQL. It is intentionally small and file-based.
 
@@ -62,67 +66,56 @@ MiniSQL is not full SQL. It is intentionally small and file-based.
 
 MiniSQL exists to live within platform limits:
 
-- Terminal width: 71 columns (keep BASIC source lines short)
-- Data file size: each `.dat` file max 10KB
-- Open file handles: max 4 at one time
+- Data file size: max 256KB per ISAM file
+- Open file handles: max 4 at one time (uses #1=log, #2=schema, #3=table, #4=batch)
 - Watchdog safety: long loops call `SLEEP(0.25)` periodically
+- Result set sort limit: max 500 rows in memory (ORDER BY)
 
 ---
 
 ## Files MiniSQL Creates
 
-Assuming `SQL_DB$ = "TESTDB"`, MiniSQL will create:
+Assuming `SQL_DB$ = "TESTDB"` and table `people`, MiniSQL creates:
 
-- `TESTDB-idx.dat`  (index + schemas + metadata)
-- `TESTDB-db1.dat`  (data rows)
-- `TESTDB-db2.dat`, `TESTDB-db3.dat`, ... (more data files)
-- `TESTDB-txn.dat`  (transaction queue)
+- `TESTDB.log.dat` — event log (always open as file #1)
+- `TESTDB.schema.idx` — ISAM system table storing schemas
+- `TESTDB.people.idx` — ISAM file per user table
+- `batch.dat` — transaction queue (global, not per-database)
 
 ### Filename rules
 
 The system does not allow `_` in filenames.
-MiniSQL uses `-` and converts `_` to `-` in your DB prefix.
+MiniSQL converts `_` to `-` in your DB prefix.
 
 ---
 
-## Storage Model (Important)
+## Storage Model (ISAM)
 
-MiniSQL uses an **append-only** storage model.
+MiniSQL v0.4.0 uses the platform's built-in **INDEXED** file system (ISAM)
+as its storage foundation.
 
-### Data records (in dbN.dat)
+### How it works
 
-Each row is one line:
+Each table gets its own ISAM file: `<db>.<table>.idx`
 
-`R|table|key|col=value|col=value|...`
+- Records are stored as **associative arrays** (`DIM R{}`)
+- The primary key field is always `"key"`
+- ISAM handles indexing, lookup, and deletion internally
+- `PUT #n, R{}` inserts or updates a record by key
+- `GET #n, R{}, KEY = k` looks up by key (fast)
+- `GET #n, R{}, NEXT` scans sequentially
+- `DELETE #n, KEY = k` removes by key
 
-Example:
+### Schema storage
 
-`R|people|alice|name=Alice|age=25|city=Chicago`
+Table schemas (column list + primary key) are stored in the system
+ISAM table `<db>.schema.idx`, keyed by table name.
 
-### Index records (in idx.dat)
+### No more append-only model
 
-Index lines point a `(table,key)` to its newest record:
-
-`I|table|key|file|rec`
-
-- `file` is db file number (1,2,3...)
-- `rec` is the line number inside db file (1-based)
-
-Deletes are tombstones:
-
-`I|table|key|0|0`
-
-### Updates and replaces
-
-UPDATE and REPLACE do not modify in place. They:
-
-1. append a new `R|...` record line
-2. append a new `I|...` line pointing to the new record
-
-### SELECT returns latest versions
-
-SELECT scans the data files but only returns records that match the
-current index pointer for each key.
+Unlike v0.3.x, MiniSQL now uses proper indexed storage.
+UPDATE and REPLACE overwrite in place. DELETE removes the entry entirely.
+No tombstone records, no multi-file rollover.
 
 ---
 
@@ -140,12 +133,10 @@ COMMON SQL_STATUS, SQL_MSG$
 
 ### Inputs
 
-* `SQL_CMD$`:
-  `INITDB`, `EXEC`, `SEARCH`, `BEGIN`, `COMMIT`, `ROLLBACK`,
-  `COMPACT`, `REINDEX`
+* `SQL_CMD$`: `INITDB`, `EXEC`, `SEARCH`, `BEGIN`, `COMMIT`, `ROLLBACK`
 * `SQL_DB$`: database prefix (example: `TESTDB`)
 * `SQL_MODE$`: `RW`, `RO`, `AO`
-* `SQL_STMT$`: statement (EXEC) or spec (SEARCH)
+* `SQL_STMT$`: statement (EXEC) or pipe-delimited spec (SEARCH)
 
 ### Outputs
 
@@ -157,7 +148,7 @@ COMMON SQL_STATUS, SQL_MSG$
 
 ## Code Template (recommended)
 
-Use this caller template in your programs. It keeps BASIC lines short.
+Use this caller template in your programs:
 
 ```basic
 REM ----- Put this near the top of your program -----
@@ -200,7 +191,8 @@ PR1:
 
 ### INITDB
 
-Creates the files if missing and seeds basic metadata.
+Creates the log file with header + option codes, and seeds the schema
+ISAM system table.
 
 **Example**
 
@@ -210,10 +202,9 @@ SQL_STMT$ = ""
 GOSUB CALL_SQL
 ```
 
-Expected `SQL_MSG$` examples:
+Expected `SQL_MSG$`:
 
-* `INITDB OK (CREATED)`
-* `INITDB OK (EXISTS)`
+* `INITDB OK`
 
 ---
 
@@ -237,11 +228,11 @@ SQL_STMT$ = "INSERT INTO people KEY alice VALUES (Alice,25,Chicago)"
 GOSUB CALL_SQL
 ```
 
-**Example: SELECT**
+**Example: SELECT with ORDER BY**
 
 ```basic
 SQL_CMD$ = "EXEC"
-SQL_STMT$ = "SELECT * FROM people WHERE city=Chicago LIMIT 10"
+SQL_STMT$ = "SELECT * FROM people ORDER BY name ASC LIMIT 10"
 GOSUB CALL_SQL
 ```
 
@@ -249,23 +240,32 @@ GOSUB CALL_SQL
 
 ### SEARCH
 
-Scan-style search. Set `SQL_STMT$` as:
+Scan-style search with configurable matching mode.
+`SQL_STMT$` is pipe-delimited: `table|term|col|mode`
 
-`table|term|col(optional)`
+The 4th field (mode) is optional, defaulting to `CONTAINS`.
 
-**Example: search any field**
+**Example: search any field (CONTAINS)**
 
 ```basic
 SQL_CMD$ = "SEARCH"
-SQL_STMT$ = "people|denver|"
+SQL_STMT$ = "people|denver||"
 GOSUB CALL_SQL
 ```
 
-**Example: search only a column**
+**Example: search by exact match on a column**
 
 ```basic
 SQL_CMD$ = "SEARCH"
-SQL_STMT$ = "people|denver|city"
+SQL_STMT$ = "people|Chicago|city|EXACT"
+GOSUB CALL_SQL
+```
+
+**Example: prefix search**
+
+```basic
+SQL_CMD$ = "SEARCH"
+SQL_STMT$ = "people|den|city|PREFIX"
 GOSUB CALL_SQL
 ```
 
@@ -273,7 +273,7 @@ GOSUB CALL_SQL
 
 ### BEGIN / COMMIT / ROLLBACK (Transaction batching)
 
-Transactions queue write statements in `DBNAME-txn.dat`.
+Transactions queue write statements in `batch.dat`.
 
 #### BEGIN
 
@@ -311,33 +311,7 @@ GOSUB CALL_SQL
 
 ---
 
-### COMPACT
-
-Rewrites `DBNAME-idx.dat` to remove old duplicates.
-Keeps only the latest schema/meta/index state.
-
-```basic
-SQL_CMD$ = "COMPACT"
-SQL_STMT$ = ""
-GOSUB CALL_SQL
-```
-
----
-
-### REINDEX
-
-Rebuilds `DBNAME-idx.dat` by scanning all `DBNAME-db*.dat` files.
-Then runs COMPACT.
-
-```basic
-SQL_CMD$ = "REINDEX"
-SQL_STMT$ = ""
-GOSUB CALL_SQL
-```
-
----
-
-## SQL-ish Statement Reference (with examples)
+## SQL-ish Statement Reference
 
 ### CREATE TABLE
 
@@ -356,8 +330,8 @@ GOSUB CALL_SQL
 Notes:
 
 * Columns are a comma-list.
-* `PK KEY` stores the pk label. MiniSQL still uses the keyword `KEY`
-  in statements for lookups/updates.
+* `PK KEY` stores the pk label. MiniSQL always uses `key` as the ISAM key
+  field internally.
 
 ---
 
@@ -382,14 +356,15 @@ Notes:
 
 ---
 
-### SELECT (+ WHERE + LIMIT)
+### SELECT (+ WHERE + ORDER BY + LIMIT)
 
 Format:
 
 * `SELECT * FROM t`
 * `SELECT * FROM t WHERE col=value`
 * `SELECT * FROM t WHERE KEY=somekey`
-* add `LIMIT n` optionally
+* `SELECT * FROM t ORDER BY col [ASC|DESC]`
+* `SELECT * FROM t WHERE col=value ORDER BY name ASC LIMIT 10`
 
 **Examples**
 
@@ -409,7 +384,7 @@ SQL_STMT$ = "SELECT * FROM people WHERE city=Chicago"
 GOSUB CALL_SQL
 ```
 
-Direct key lookup (fastest):
+Direct key lookup (fastest — uses ISAM keyed GET):
 
 ```basic
 SQL_CMD$ = "EXEC"
@@ -417,13 +392,28 @@ SQL_STMT$ = "SELECT * FROM people WHERE KEY=alice"
 GOSUB CALL_SQL
 ```
 
-Filter + limit:
+Sorted results:
 
 ```basic
 SQL_CMD$ = "EXEC"
-SQL_STMT$ = "SELECT * FROM people WHERE city=Chicago LIMIT 5"
+SQL_STMT$ = "SELECT * FROM people ORDER BY name ASC"
 GOSUB CALL_SQL
 ```
+
+Filter + sort + limit:
+
+```basic
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "SELECT * FROM people WHERE city=Chicago ORDER BY age DESC LIMIT 5"
+GOSUB CALL_SQL
+```
+
+**ORDER BY details:**
+
+* Up to 500 rows are collected in memory and insertion-sorted.
+* If more than 500 rows match, excess rows are appended unsorted.
+* ASC and DESC are supported. Default is ASC.
+* Uses string comparison (text sorting, not numeric).
 
 ---
 
@@ -443,8 +433,9 @@ GOSUB CALL_SQL
 
 Behavior:
 
-* appends a new record version
-* updates index to point to the new version
+* Retrieves the existing record by key
+* Modifies the specified column in memory
+* Re-puts the record via ISAM (overwrites)
 
 ---
 
@@ -464,8 +455,8 @@ GOSUB CALL_SQL
 
 Behavior:
 
-* appends a full new record version
-* updates index to point to it
+* Creates a fresh record with all columns from VALUES
+* Puts it via ISAM (overwrites any existing record with that key)
 
 ---
 
@@ -485,8 +476,57 @@ GOSUB CALL_SQL
 
 Behavior:
 
-* writes a tombstone `I|people|bob|0|0`
-* old row versions remain in db files but are not returned
+* Removes the record from the ISAM file by key.
+* No tombstone entries.
+
+---
+
+### DROP TABLE
+
+Format:
+
+`DROP TABLE t`
+
+**Example**
+
+```basic
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "DROP TABLE people"
+GOSUB CALL_SQL
+```
+
+Behavior:
+
+* Empties the table's ISAM file and removes its schema entry.
+* The ISAM file still exists on disk (empty) and can be re-created
+  with CREATE TABLE.
+
+---
+
+## SEARCH Modes
+
+The SEARCH command supports four matching modes as the 4th
+pipe-delimited parameter in `SQL_STMT$`:
+
+| Mode       | Description                    | Example match "Chicago" |
+|------------|--------------------------------|-------------------------|
+| `CONTAINS` | Substring match (default)      | `"Chi"` ✓ `"go"` ✓      |
+| `EXACT`    | Full field must equal term     | `"Chicago"` only         |
+| `PREFIX`   | Field starts with term         | `"Chi"` ✓ `"go"` ✗      |
+| `SUFFIX`   | Field ends with term           | `"go"` ✓ `"Chi"` ✗      |
+
+**Examples:**
+
+```basic
+' EXACT match on city field
+SQL_STMT$ = "people|Chicago|city|EXACT"
+
+' PREFIX match on name field
+SQL_STMT$ = "people|A|name|PREFIX"
+
+' SUFFIX match on any field (leave col blank)
+SQL_STMT$ = "people|ville||SUFFIX"
+```
 
 ---
 
@@ -526,6 +566,75 @@ GOSUB CALL_SQL
 
 ---
 
+## Event Logging
+
+MiniSQL maintains an event log at `<db>.log.dat`. It is opened at the
+start of every session (file handle #1) and kept open until the session
+ends.
+
+Each log line is pipe-delimited:
+
+`EVENT|LABEL|YYYY-MM-DDTHH:MM:SS|message`
+
+### Log labels
+
+| Label     | When used                        |
+|-----------|----------------------------------|
+| `OPEN`    | Database opened, transaction start |
+| `CLOSED`  | Database closed, txn rollback/commit |
+| `UPDATED` | CREATE TABLE, UPDATE, REPLACE    |
+| `APPENDED`| INSERT                           |
+| `DELETED` | DELETE, DROP TABLE               |
+| `WARNING` | Mode violation (RO/AO)           |
+| `ERROR`   | Transaction abort                |
+
+### Example log output
+
+```
+HDR|testdb|0.4.0|2026-05-28T14:30:45
+OPT|100|0.4.0
+OPT|101|0
+...
+EVENT|OPEN|2026-05-28T14:30:46|Database testdb opened
+EVENT|APPENDED|2026-05-28T14:30:50|INSERT people KEY alice
+EVENT|CLOSED|2026-05-28T14:30:52|Database session end
+```
+
+---
+
+## Option Codes
+
+Option codes are stored in the log file header and loaded on startup.
+They control MiniSQL behavior. All 30 slots (100-109, 200-209, 300-309)
+are pre-allocated with defaults.
+
+### Header options (100-109)
+
+| Code | Name            | Default  | Description             |
+|------|-----------------|----------|-------------------------|
+| 100  | VERSION         | `0.4.0`  | Database version        |
+| 101  | AUTOCOMPACT     | `0`      | Auto-compact on startup |
+| 102  | MAXREC          | `10000`  | Max records per file    |
+| 103-109 | (reserved)   | `0`      | Future use              |
+
+### Log options (200-209)
+
+| Code | Name            | Default  | Description             |
+|------|-----------------|----------|-------------------------|
+| 200  | LOG_ENABLED     | `1`      | Enable event logging    |
+| 201  | LOG_LEVEL       | `1`      | 0=errors, 1=normal, 2=verbose |
+| 202-209 | (reserved)   | `0`      | Future use              |
+
+### Batching options (300-309)
+
+| Code | Name            | Default  | Description             |
+|------|-----------------|----------|-------------------------|
+| 300  | BATCH_ENABLED   | `1`      | Enable transaction batching |
+| 301  | BATCH_MAX       | `100`    | Max statements per batch |
+| 302-309 | (reserved)   | `0`      | Future use              |
+
+---
+
 ## Results and Output Format
 
 ### SQL_MSG$
@@ -534,7 +643,6 @@ Always check `SQL_STATUS`. `SQL_MSG$` gives a short hint:
 
 * `INSERTED people KEY alice`
 * `UPDATED people KEY bob`
-* `0 ROWS`
 * `READ-ONLY MODE`
 
 ### SQL_RESULT$
@@ -542,23 +650,21 @@ Always check `SQL_STATUS`. `SQL_MSG$` gives a short hint:
 For SELECT/SEARCH:
 
 * records are joined with `CHR$(10)`
-* each record line is the raw stored line:
+* each record line format:
 
-`R|table|key|col=value|...`
+`R|pkname|pkvalue|col=value|col=value|...`
 
 ### Example: parsing a record line
 
-If you want to extract the `key` from a result row:
-
 ```basic
 REM L$ is one record line like:
-REM R|people|alice|name=Alice|age=25|city=Chicago
+REM R|key|alice|name=Alice|age=25|city=Chicago
 
-REM remove "R|"
+REM remove leading "R|"
 REST$ = MID$(L$, 3)
 
-REM token 1 = table, token 2 = key
-TBL$ = GETTOK$(REST$, "|", 1)
+REM token 1 = pkname, token 2 = pkvalue
+PKNAME$ = GETTOK$(REST$, "|", 1)
 KEY$ = GETTOK$(REST$, "|", 2)
 ```
 
@@ -566,7 +672,6 @@ A minimal token helper (no quotes):
 
 ```basic
 GETTOK$:
-  REM IN: S$, D$, N  OUT: GETTOK$
   P = 1
   K = 1
 GT1:
@@ -587,23 +692,24 @@ GT1:
 
 ## Error Codes (SQL_STATUS)
 
-Common codes:
-
-* `0` OK
-* `10` missing SQL_DB$
-* `11` empty SQL statement
-* `12` unsupported SQL
-* `20` read-only mode blocked a write
-* `21` append-only mode blocked a non-insert
-* `30..35` CREATE parse errors
-* `40..46` INSERT parse / missing table errors
-* `50..52` SELECT parse errors
-* `60..65` UPDATE parse errors
-* `70..75` REPLACE parse errors
-* `80..82` DELETE parse errors
-* `90..91` SEARCH parse errors
-* `98` internal empty record protection
-* `99` unknown command
+| Code | Description                       |
+|------|-----------------------------------|
+| `0`  | OK                                |
+| `10` | missing SQL_DB$                   |
+| `11` | empty SQL statement               |
+| `12` | unsupported SQL                   |
+| `20` | read-only mode blocked a write    |
+| `21` | append-only mode blocked non-INSERT |
+| `30..33` | CREATE parse / table exists    |
+| `40..46` | INSERT parse / missing table   |
+| `50..52` | SELECT parse errors            |
+| `60..66` | UPDATE parse / key not found   |
+| `70..75` | REPLACE parse errors            |
+| `80..82` | DELETE parse errors            |
+| `85..86` | DROP parse / missing table     |
+| `90..91` | SEARCH parse / missing table   |
+| `98`   | internal empty record protection  |
+| `99`   | unknown command                   |
 
 Tip: always print both `SQL_STATUS` and `SQL_MSG$`.
 
@@ -613,44 +719,50 @@ Tip: always print both `SQL_STATUS` and `SQL_MSG$`.
 
 1. Run INITDB once per DB name before other commands.
 
-2. Prefer `WHERE KEY=...` for fastest lookups.
+2. Prefer `WHERE KEY=...` for fastest lookups (ISAM keyed GET).
 
-3. Run COMPACT occasionally to keep `idx.dat` smaller.
-
-4. Run REINDEX if you suspect index problems.
-
-5. Use transactions for bulk writes:
-   
+3. Use transactions for bulk writes:
    * BEGIN
-   * many EXEC (queued)
+   * many EXEC (queued in batch.dat)
    * COMMIT
+
+4. No COMPACT/REINDEX needed — ISAM handles index maintenance
+   internally.
+
+5. The log file grows unbounded. Periodically clear it by deleting
+   `<db>.log.dat` or running INITDB again (recreates the header).
 
 ---
 
 ## Troubleshooting
 
-### “My program runs but nothing happens”
+### "My program runs but nothing happens"
 
 Most common causes:
 
 1. You never print status/result in the caller.
-   
    * Use the CALL_SQL helper in this manual.
 
 2. CHAIN target mismatch.
-   
    * Try `CHAIN "minisql.bas"`.
 
 3. COMMON mismatch (variables or order differ).
-   
    * Ensure both files use exactly the same COMMON declarations.
 
-### “SELECT returns old data”
+### "SELECT returns 0 ROWS but I inserted data"
 
-MiniSQL returns the latest indexed version. If index seems stale:
+Check:
 
-* run COMPACT
-* if still wrong, run REINDEX
+1. The SQL_DB$ matches between INSERT and SELECT calls.
+2. The table name matches.
+3. You used the same KEY value you're searching for.
+
+### "ORDER BY returns unsorted results"
+
+Possible causes:
+
+1. More than 500 rows matched — overflow rows are not sorted.
+2. The sort column name doesn't match the schema (case-sensitive).
 
 ---
 
@@ -660,17 +772,15 @@ MiniSQL is intentionally simple:
 
 * no quoting/escaping
 * values cannot safely contain `,` or `|`
-* WHERE is simple `col=value`
-* no JOIN/ORDER/GROUP
+* WHERE is simple `col=value` (no expression evaluation)
+* no JOIN/GROUP BY/aggregate functions
 * no type enforcement (everything is text)
-
-This may change in newer versions.
+* ORDER BY uses string comparison, not numeric
+* ORDER BY limited to 500 rows in memory
 
 ---
 
 ## Quick Walkthrough Example (full flow)
-
-This shows the full flow in one place.
 
 ```basic
 REM Setup
@@ -695,12 +805,40 @@ REM Update
 SQL_STMT$ = "UPDATE people KEY alice SET city=Boston"
 GOSUB CALL_SQL
 
-REM Select
-SQL_STMT$ = "SELECT * FROM people WHERE KEY=alice"
+REM Select with ORDER BY
+SQL_STMT$ = "SELECT * FROM people ORDER BY name ASC"
 GOSUB CALL_SQL
 
-REM Compact
-SQL_CMD$ = "COMPACT"
-SQL_STMT$ = ""
+REM SEARCH with PREFIX match
+SQL_CMD$ = "SEARCH"
+SQL_STMT$ = "people|Bos|city|PREFIX"
 GOSUB CALL_SQL
+
+REM Done
+END
+
+CALL_SQL:
+  SQL_STATUS = 0
+  SQL_MSG$ = ""
+  SQL_RESULT$ = ""
+  CHAIN "minisql"
+  PRINT "STATUS:"; SQL_STATUS
+  PRINT "MSG   :"; SQL_MSG$
+  IF SQL_RESULT$<>"" THEN GOSUB PRINT_RES
+  RETURN
+
+PRINT_RES:
+  S$ = SQL_RESULT$
+  P = 1
+PR1:
+  N = INSTR(MID$(S$, P), CHR$(10))
+  IF N=0 THEN
+    L$ = MID$(S$, P)
+    IF TRIM$(L$)<>"" THEN PRINT L$
+    RETURN
+  END IF
+  L$ = MID$(S$, P, N-1)
+  IF TRIM$(L$)<>"" THEN PRINT L$
+  P = P + N
+  GOTO PR1
 ```
