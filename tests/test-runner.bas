@@ -1,9 +1,9 @@
 REM ==============================================================
 REM  MiniSQL Test Runner  —  runs all test*.bas programs
 REM ==============================================================
-REM  Usage: CHAIN "tests/test_runner"  (or RUN from BASIC)
+REM  Usage: CHAIN "tests/test-runner.bas"  (or RUN from BASIC)
 REM
-REM  Each test creates its own table(s) prefixed with "tst_" and
+REM  Each test creates its own table(s) prefixed with "tst-" and
 REM  cleans up before exiting.  The runner prints PASS/FAIL for
 REM  each test based on SQL_STATUS and expected output.
 REM ==============================================================
@@ -18,38 +18,32 @@ REM ---- Init once ----
 SQL_DB$ = TESTDB$
 SQL_MODE$ = "RW"
 SQL_CMD$ = "INITDB"
-CHAIN "minisql"
+CHAIN "minisql.bas"
 PRINT "=== MiniSQL Test Suite ==="
 PRINT "DB: "; TESTDB$
 PRINT ""
 
 REM ---- Test list ----
 DIM TN$(20)
-TN$(1) = "test_create"
-TN$(2) = "test_insert"
-TN$(3) = "test_select"
-TN$(4) = "test_where"
-TN$(5) = "test_update"
-TN$(6) = "test_delete"
-TN$(7) = "test_alter"
-TN$(8) = "test_count"
-TN$(9) = "test_show_describe"
-TN$(10) = "test_replace"
-TN$(11) = "test_duplicate_key"
-TN$(12) = "test_transactions"
-TN$(13) = "test_search"
+TN$(1) = "test-create"
+TN$(2) = "test-insert"
+TN$(3) = "test-select"
+TN$(4) = "test-where"
+TN$(5) = "test-update"
+TN$(6) = "test-delete"
+TN$(7) = "test-alter"
+TN$(8) = "test-count"
+TN$(9) = "test-show-describe"
+TN$(10) = "test-replace"
+TN$(11) = "test-duplicate-key"
+TN$(12) = "test-transactions"
+TN$(13) = "test-search"
 TOTAL = 13
 
 FOR TI = 1 TO TOTAL
     PRINT "["; TI; "/"; TOTAL; "] Running "; TN$(TI); "..."
-    SQL_CMD$ = "EXEC"
-    SQL_STMT$ = "DELETE FROM tst_meta KEY " + TN$(TI)
-    CHAIN "minisql"
-    SQL_STMT$ = "INSERT INTO tst_meta KEY " + TN$(TI)
-    SQL_STMT$ = SQL_STMT$ + " VALUES (running)"
-    CHAIN "minisql"
     
-    CHAIN "tests/" + TN$(TI)
+    CHAIN "tests/" + TN$(TI) + ".bas"
     
     IF SQL_STATUS = 0 THEN
         PRINT "  PASS"; TAB(40); SQL_MSG$

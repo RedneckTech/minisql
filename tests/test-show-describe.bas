@@ -9,26 +9,26 @@ SQL_MODE$ = "RW"
 SQL_CMD$ = "EXEC"
 
 REM Create a couple tables for listing
-SQL_STMT$ = "CREATE TABLE tst_shw1 (a,b) PK KEY"
-CHAIN "minisql"
+SQL_STMT$ = "CREATE TABLE tst-shw1 (a,b) PK KEY"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
-SQL_STMT$ = "CREATE TABLE tst_shw2 (x,y,z) PK KEY"
-CHAIN "minisql"
+SQL_STMT$ = "CREATE TABLE tst-shw2 (x,y,z) PK KEY"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
 REM SHOW TABLES
 SQL_STMT$ = "SHOW TABLES"
-CHAIN "minisql"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
 REM DESCRIBE
-SQL_STMT$ = "DESCRIBE tst_shw1"
-CHAIN "minisql"
+SQL_STMT$ = "DESCRIBE tst-shw1"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
-SQL_STMT$ = "DESCRIBE tst_shw2"
-CHAIN "minisql"
+SQL_STMT$ = "DESCRIBE tst-shw2"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
 SQL_STATUS = 0

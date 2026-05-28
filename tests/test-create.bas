@@ -8,17 +8,17 @@ SQL_DB$ = "TESTSUITE"
 SQL_MODE$ = "RW"
 SQL_CMD$ = "EXEC"
 
-SQL_STMT$ = "CREATE TABLE tst_create (name,age,city) PK KEY"
-CHAIN "minisql"
+SQL_STMT$ = "CREATE TABLE tst-create (name,age,city) PK KEY"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
-SQL_STMT$ = "INSERT INTO tst_create KEY alice"
+SQL_STMT$ = "INSERT INTO tst-create KEY alice"
 SQL_STMT$ = SQL_STMT$ + " VALUES (Alice,25,Chicago)"
-CHAIN "minisql"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
-SQL_STMT$ = "SELECT * FROM tst_create WHERE KEY=alice"
-CHAIN "minisql"
+SQL_STMT$ = "SELECT * FROM tst-create WHERE KEY=alice"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
 SQL_STATUS = 0

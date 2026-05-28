@@ -8,38 +8,38 @@ SQL_DB$ = "TESTSUITE"
 SQL_MODE$ = "RW"
 SQL_CMD$ = "EXEC"
 
-SQL_STMT$ = "CREATE TABLE tst_upd (name,age,score) PK KEY"
-CHAIN "minisql"
+SQL_STMT$ = "CREATE TABLE tst-upd (name,age,score) PK KEY"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
-SQL_STMT$ = "INSERT INTO tst_upd KEY a VALUES (Alice,25,80)"
-CHAIN "minisql"
-SQL_STMT$ = "INSERT INTO tst_upd KEY b VALUES (Bob,30,90)"
-CHAIN "minisql"
-SQL_STMT$ = "INSERT INTO tst_upd KEY c VALUES (Carol,22,85)"
-CHAIN "minisql"
-SQL_STMT$ = "INSERT INTO tst_upd KEY d VALUES (Dave,35,95)"
-CHAIN "minisql"
+SQL_STMT$ = "INSERT INTO tst-upd KEY a VALUES (Alice,25,80)"
+CHAIN "minisql.bas"
+SQL_STMT$ = "INSERT INTO tst-upd KEY b VALUES (Bob,30,90)"
+CHAIN "minisql.bas"
+SQL_STMT$ = "INSERT INTO tst-upd KEY c VALUES (Carol,22,85)"
+CHAIN "minisql.bas"
+SQL_STMT$ = "INSERT INTO tst-upd KEY d VALUES (Dave,35,95)"
+CHAIN "minisql.bas"
 
 REM KEY-based single-col update
-SQL_STMT$ = "UPDATE tst_upd KEY a SET age=26"
-CHAIN "minisql"
+SQL_STMT$ = "UPDATE tst-upd KEY a SET age=26"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
 REM KEY-based multi-col update
-SQL_STMT$ = "UPDATE tst_upd KEY b SET age=31,score=91"
-CHAIN "minisql"
+SQL_STMT$ = "UPDATE tst-upd KEY b SET age=31,score=91"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
 REM Bulk WHERE update
-SQL_STMT$ = "UPDATE tst_upd SET score=100 WHERE age>25"
-CHAIN "minisql"
+SQL_STMT$ = "UPDATE tst-upd SET score=100 WHERE age>25"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
 REM Verify
-SQL_STMT$ = "SELECT name,age,score FROM tst_upd"
+SQL_STMT$ = "SELECT name,age,score FROM tst-upd"
 SQL_STMT$ = SQL_STMT$ + " ORDER BY name ASC"
-CHAIN "minisql"
+CHAIN "minisql.bas"
 IF SQL_STATUS <> 0 THEN END
 
 SQL_STATUS = 0
