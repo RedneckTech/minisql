@@ -1,4 +1,4 @@
-# MiniSQL (TIMESHARING BASIC) — Chainable Tiny SQL-ish Database
+# MiniSQL (TIMESHARING BASIC) v0.4.0 — Chainable Tiny SQL-ish Database
 
 MiniSQL is a small, **chainable** SQL-ish database engine written for
 **TIMESHARING BASIC / 3270BBS-style BASIC**.
@@ -16,24 +16,22 @@ projects without rewriting storage/search logic every time.
   - Your program sets `COMMON` variables and `CHAIN`s into `minisql.bas`.
   - MiniSQL runs one command and returns to the caller.
 
+- **ISAM-based storage**
+  
+  - Uses the platform's built-in INDEXED file system (PUT/GET/DELETE)
+  - Each table has its own ISAM file for fast keyed lookups
+
 - **Multiple tables**
   
-  - Table schemas are stored in the index file.
+  - Table schemas stored in a system ISAM table (`<db>.schema.idx`)
 
-- **Storage across multiple data files**
+- **Full CRUD + DROP**
   
-  - Data is stored in: `DBNAME-db1.dat`, `DBNAME-db2.dat`, ...
-  - Each `.dat` file stays under the **10KB** limit.
+  - CREATE TABLE, INSERT, SELECT, UPDATE, REPLACE, DELETE, DROP TABLE
 
-- **Indexing**
+- **ORDER BY with sorting**
   
-  - Index is stored in: `DBNAME-idx.dat`
-  - Index entries are append-only (latest entry wins).
-
-- **Update/Replace support**
-  
-  - Updates append a **new version** of a row.
-  - Index is updated to point at the newest version.
+  - `ORDER BY col [ASC|DESC]` with in-memory insertion sort (up to 500 rows)
 
 - **Read-only and append-only modes**
   
@@ -42,20 +40,24 @@ projects without rewriting storage/search logic every time.
 
 - **Search and filtering**
   
-  - `SELECT ... WHERE col=value`
+  - `SELECT ... WHERE col=value` or `WHERE KEY=val`
   - `LIMIT n`
-  - `SEARCH` command: `table|term|col(optional)`
+  - `SEARCH` with modes: CONTAINS, EXACT, PREFIX, SUFFIX
 
 - **Transaction-style batching**
   
-  - `BEGIN` queues statements into `DBNAME-txn.dat`
+  - `BEGIN` queues statements into `batch.dat`
   - `COMMIT` runs queued statements
   - `ROLLBACK` clears the queue
 
-- **COMPACT and REINDEX maintenance**
+- **Event logging**
   
-  - `COMPACT`: rebuilds the index to remove old duplicate entries.
-  - `REINDEX`: rebuilds index entries by scanning the DB data files.
+  - All operations logged to `<db>.log.dat` with timestamps
+  - Labels: OPEN, CLOSED, UPDATED, APPENDED, DELETED, WARNING, ERROR
+
+- **Configurable option codes**
+  
+  - 30 pre-allocated options (100-109 header, 200-209 log, 300-309 batching)
 
 - **Watchdog-safe**
   
@@ -63,20 +65,13 @@ projects without rewriting storage/search logic every time.
 
 - **4 open files max**
   
-  - MiniSQL opens files briefly and closes them quickly.
-  - Typically only 1–2 files are open at any time.
+  - #1=log (always open), #2=schema, #3=table, #4=batch
 
 ---
 
 ## Project Files
 
-- `minisql.bas`
-  
-  - The chainable database engine.
-
-- `demo_sql.bas`
-  
-  - Interactive tutorial/demo that teaches how to call `minisql.bas`.
+- `minisql.bas` — the chainable database engine (851 lines)
 
 ---
 
@@ -87,70 +82,69 @@ The terminal/filesystem rules for this project include:
 - Filenames **cannot** contain `_`
 - MiniSQL uses `-` instead.
 
-Generated files:
+Generated files for `SQL_DB$ = "testdb"` with table `people`:
 
-- `DBNAME-idx.dat`  (index, schemas, metadata)
-- `DBNAME-db1.dat`  (data rows)
-- `DBNAME-db2.dat`  (next data file when db1 is full)
-- `DBNAME-txn.dat`  (transaction queue)
-
-Where `DBNAME` comes from `SQL_DB$` (MiniSQL also sanitizes `_` → `-`).
+- `testdb.log.dat` — event log
+- `testdb.schema.idx` — system ISAM table for schemas
+- `testdb.people.idx` — ISAM file per user table
+- `batch.dat` — transaction queue (global)
 
 ---
 
-## Data Format (High-Level)
-
-MiniSQL uses simple text lines:
-
-### Index file: `DBNAME-idx.dat`
-
-- `M|CUR|n`
-  
-  - Current active DB file number (`dbn.dat`)
-
-- `M|TXN|0/1`
-  
-  - Transaction flag
-
-- `F|n|bytes`
-  
-  - Approx byte count of `dbn.dat` (for 10KB rollover)
-
-- `R|n|lastRec`
-  
-  - Record count in `dbn.dat`
-
-- `S|table|col1,col2,col3|pkname`
-  
-  - Table schema
-
-- `I|table|key|file|rec`
-  
-  - Index entry:
-    - `file,rec` points to a row in `dbX.dat`
-    - `0|0` is a tombstone (deleted)
-
-### Data files: `DBNAME-dbX.dat`
-
-Rows are stored as:
-
-- `R|table|key|col=value|col=value|...`
-
-Updates and replaces append a new `R|...` line and update the index to
-point at the newest record.
-
----
-
-## Calling MiniSQL from Your Program
-
-MiniSQL is controlled using `COMMON` variables.
-
-Your program must declare **the same COMMON variables** as `minisql.bas`
-and then `CHAIN` into MiniSQL.
-
-### Required COMMON block (caller + minisql must match)
+## Quick Example
 
 ```basic
 COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$
 COMMON SQL_STATUS, SQL_MSG$
+
+SQL_DB$ = "testdb"
+SQL_MODE$ = "RW"
+
+SQL_CMD$ = "INITDB"
+SQL_STMT$ = ""
+CHAIN "minisql"
+
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "CREATE TABLE people (name,age,city) PK KEY"
+CHAIN "minisql"
+
+SQL_STMT$ = "INSERT INTO people KEY alice VALUES (Alice,25,Chicago)"
+CHAIN "minisql"
+
+SQL_STMT$ = "SELECT * FROM people WHERE KEY=alice"
+CHAIN "minisql"
+PRINT SQL_RESULT$
 ```
+
+---
+
+## Commands
+
+| Command      | Description                        |
+|--------------|------------------------------------|
+| `INITDB`     | Initialize database files          |
+| `EXEC`       | Execute SQL statement              |
+| `SEARCH`     | Scan with CONTAINS/EXACT/PREFIX/SUFFIX |
+| `BEGIN`      | Start transaction                  |
+| `COMMIT`     | Commit queued statements           |
+| `ROLLBACK`   | Rollback queued statements         |
+
+### SQL Statements (via EXEC)
+
+| Statement                      | Description                |
+|--------------------------------|----------------------------|
+| `CREATE TABLE t (a,b,c) PK k` | Create table               |
+| `INSERT INTO t KEY k VALUES (v1,v2,...)` | Insert row    |
+| `SELECT * FROM t [WHERE ...] [ORDER BY ...] [LIMIT n]` | Query |
+| `UPDATE t KEY k SET col=val`  | Update column              |
+| `REPLACE t KEY k VALUES (...)`| Replace entire row         |
+| `DELETE FROM t KEY k`         | Delete by key              |
+| `DROP TABLE t`                | Drop table                 |
+
+---
+
+## Documentation
+
+See `user_manual.md` for complete documentation including calling
+convention, storage model, error codes, SEARCH modes, option codes,
+and a full walkthrough example.
