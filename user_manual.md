@@ -1,4 +1,4 @@
-# MiniSQL User Manual (minisql.bas) — v0.4.0
+# MiniSQL User Manual (minisql.bas) — v0.5.0
 
 MiniSQL is a tiny SQL-ish database engine designed for
 TIMESHARING BASIC / 3270BBS-style BASIC.
@@ -6,9 +6,6 @@ TIMESHARING BASIC / 3270BBS-style BASIC.
 It is used like a **library**: your program sets `COMMON` variables and
 `CHAIN`s into `minisql.bas` for one operation. MiniSQL returns to your
 program when it finishes.
-
-This manual explains how to integrate MiniSQL, how storage works, and
-how to use every command.
 
 ---
 
@@ -21,18 +18,23 @@ how to use every command.
 - Calling Convention (COMMON + CHAIN)
 - Code Template (recommended)
 - Commands (with code examples)
-  - INITDB
+  - INITDB / OPENDB
   - EXEC
   - SEARCH
   - BEGIN / COMMIT / ROLLBACK
 - SQL-ish Statement Reference (with examples)
   - CREATE TABLE
-  - INSERT
-  - SELECT (+ WHERE + ORDER BY + LIMIT)
-  - UPDATE
+  - INSERT (+ auto-increment keys)
+  - SELECT (column filtering, DISTINCT, *,
+    WHERE with AND/OR/comparison/LIKE,
+    ORDER BY, LIMIT, COUNT)
+  - UPDATE (single-key, bulk WHERE, multi-col SET)
   - REPLACE
-  - DELETE
+  - DELETE (single-key, bulk WHERE)
   - DROP TABLE
+  - SHOW TABLES
+  - DESCRIBE table
+  - ALTER TABLE (ADD / DROP col)
 - SEARCH Modes: CONTAINS, EXACT, PREFIX, SUFFIX
 - Modes (RW / RO / AO)
 - Event Logging
@@ -52,11 +54,20 @@ MiniSQL provides:
 - simple tables (schema stored in a system ISAM table)
 - insert/select/update/replace/delete/drop
 - ISAM-based primary key index on every table
-- transactions (queue statements, commit later)
-- event logging with timestamps
-- configurable option codes
-- search with CONTAINS, EXACT, PREFIX, SUFFIX matching
+- SELECT column filtering (col1,col2,... or *)
+- SELECT DISTINCT deduplication
+- WHERE with AND/OR, comparison operators (< > <= >= <>),
+  and LIKE (% wildcard)
 - ORDER BY with ascending/descending sort
+- COUNT(*) aggregate
+- auto-increment numeric keys
+- transactions (queue statements, commit later)
+- event logging with timestamps + configurable log levels
+- configurable option codes
+- SHOW TABLES / DESCRIBE / ALTER TABLE
+- search with CONTAINS, EXACT, PREFIX, SUFFIX matching
+- bulk UPDATE and DELETE by WHERE clause
+- multi-column SET in UPDATE
 
 MiniSQL is not full SQL. It is intentionally small and file-based.
 
@@ -67,7 +78,8 @@ MiniSQL is not full SQL. It is intentionally small and file-based.
 MiniSQL exists to live within platform limits:
 
 - Data file size: max 256KB per ISAM file
-- Open file handles: max 4 at one time (uses #1=log, #2=schema, #3=table, #4=batch)
+- Open file handles: max 4 at one time
+  (uses #1=log, #2=schema, #3=table, #4=batch)
 - Watchdog safety: long loops call `SLEEP(0.25)` periodically
 - Result set sort limit: max 500 rows in memory (ORDER BY)
 
@@ -91,8 +103,8 @@ MiniSQL converts `_` to `-` in your DB prefix.
 
 ## Storage Model (ISAM)
 
-MiniSQL v0.4.0 uses the platform's built-in **INDEXED** file system (ISAM)
-as its storage foundation.
+MiniSQL v0.4.0+ uses the platform's built-in **INDEXED** file system
+(ISAM) as its storage foundation.
 
 ### How it works
 
@@ -108,14 +120,14 @@ Each table gets its own ISAM file: `<db>.<table>.idx`
 
 ### Schema storage
 
-Table schemas (column list + primary key) are stored in the system
-ISAM table `<db>.schema.idx`, keyed by table name.
+Table schemas (column list + primary key + auto-inc sequence) are
+stored in the system ISAM table `<db>.schema.idx`, keyed by table name.
 
 ### No more append-only model
 
 Unlike v0.3.x, MiniSQL now uses proper indexed storage.
-UPDATE and REPLACE overwrite in place. DELETE removes the entry entirely.
-No tombstone records, no multi-file rollover.
+UPDATE and REPLACE overwrite in place. DELETE removes the entry
+entirely. No tombstone records, no multi-file rollover.
 
 ---
 
@@ -220,19 +232,27 @@ SQL_STMT$ = "CREATE TABLE people (name,age,city) PK KEY"
 GOSUB CALL_SQL
 ```
 
-**Example: INSERT**
+**Example: INSERT with auto-increment key**
 
 ```basic
 SQL_CMD$ = "EXEC"
-SQL_STMT$ = "INSERT INTO people KEY alice VALUES (Alice,25,Chicago)"
+SQL_STMT$ = "INSERT INTO people VALUES (Alice,25,Chicago)"
 GOSUB CALL_SQL
 ```
 
-**Example: SELECT with ORDER BY**
+**Example: SELECT with column filtering and WHERE**
 
 ```basic
 SQL_CMD$ = "EXEC"
-SQL_STMT$ = "SELECT * FROM people ORDER BY name ASC LIMIT 10"
+SQL_STMT$ = "SELECT name,age FROM people WHERE city=Chicago"
+GOSUB CALL_SQL
+```
+
+**Example: bulk UPDATE by WHERE**
+
+```basic
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "UPDATE people SET city=Denver WHERE age<30"
 GOSUB CALL_SQL
 ```
 
@@ -258,14 +278,6 @@ GOSUB CALL_SQL
 ```basic
 SQL_CMD$ = "SEARCH"
 SQL_STMT$ = "people|Chicago|city|EXACT"
-GOSUB CALL_SQL
-```
-
-**Example: prefix search**
-
-```basic
-SQL_CMD$ = "SEARCH"
-SQL_STMT$ = "people|den|city|PREFIX"
 GOSUB CALL_SQL
 ```
 
@@ -330,8 +342,8 @@ GOSUB CALL_SQL
 Notes:
 
 * Columns are a comma-list.
-* `PK KEY` stores the pk label. MiniSQL always uses `key` as the ISAM key
-  field internally.
+* `PK KEY` stores the pk label. MiniSQL always uses `key` as the ISAM
+  key field internally.
 
 ---
 
@@ -339,9 +351,12 @@ Notes:
 
 Format:
 
-`INSERT INTO t KEY k VALUES (v1,v2,v3)`
+`INSERT INTO t [KEY k|*] VALUES (v1,v2,v3)`
 
-**Example**
+KEY is optional. Omitting KEY or using `*` auto-generates a numeric
+key from the table's sequence counter (starts at 1).
+
+**Example: explicit key**
 
 ```basic
 SQL_CMD$ = "EXEC"
@@ -349,64 +364,124 @@ SQL_STMT$ = "INSERT INTO people KEY alice VALUES (Alice,25,Chicago)"
 GOSUB CALL_SQL
 ```
 
+**Example: auto-increment key**
+
+```basic
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "INSERT INTO people VALUES (Bob,30,Boston)"
+GOSUB CALL_SQL
+```
+
+**Example: auto-increment with KEY ***
+
+```basic
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "INSERT INTO people KEY * VALUES (Carol,28,Miami)"
+GOSUB CALL_SQL
+```
+
 Notes:
 
 * values are positional, matching schema order.
-* no quoting rules (commas and `|` inside values will break parsing).
+* duplicate explicit keys are rejected (error code 47).
+* auto-increment keys are guaranteed unique per table.
 
 ---
 
-### SELECT (+ WHERE + ORDER BY + LIMIT)
+### SELECT
 
 Format:
 
 * `SELECT * FROM t`
-* `SELECT * FROM t WHERE col=value`
-* `SELECT * FROM t WHERE KEY=somekey`
-* `SELECT * FROM t ORDER BY col [ASC|DESC]`
-* `SELECT * FROM t WHERE col=value ORDER BY name ASC LIMIT 10`
+* `SELECT col1,col2 FROM t`
+* `SELECT DISTINCT col FROM t`
+* `SELECT COUNT(*) FROM t`
+* `... WHERE col=value`
+* `... WHERE cond AND cond2 OR cond3`
+* `... WHERE col LIKE %pattern%`
+* `... WHERE key > 100`
+* `... WHERE KEY=somekey`
+* `... ORDER BY col [ASC|DESC]`
+* `... LIMIT n`
 
 **Examples**
 
 Select all:
 
 ```basic
-SQL_CMD$ = "EXEC"
 SQL_STMT$ = "SELECT * FROM people"
-GOSUB CALL_SQL
 ```
 
-Filter by column:
+Filter columns:
 
 ```basic
-SQL_CMD$ = "EXEC"
-SQL_STMT$ = "SELECT * FROM people WHERE city=Chicago"
-GOSUB CALL_SQL
+SQL_STMT$ = "SELECT name,age FROM people"
+```
+
+With DISTINCT:
+
+```basic
+SQL_STMT$ = "SELECT DISTINCT city FROM people"
+```
+
+Count rows:
+
+```basic
+SQL_STMT$ = "SELECT COUNT(*) FROM people"
+```
+
+WHERE with AND:
+
+```basic
+SQL_STMT$ = "SELECT * FROM people WHERE age>20 AND city=Chicago"
+```
+
+WHERE with LIKE:
+
+```basic
+SQL_STMT$ = "SELECT * FROM people WHERE name LIKE %A%"
+```
+
+WHERE with comparison:
+
+```basic
+SQL_STMT$ = "SELECT * FROM people WHERE age>=18"
 ```
 
 Direct key lookup (fastest — uses ISAM keyed GET):
 
 ```basic
-SQL_CMD$ = "EXEC"
 SQL_STMT$ = "SELECT * FROM people WHERE KEY=alice"
-GOSUB CALL_SQL
-```
-
-Sorted results:
-
-```basic
-SQL_CMD$ = "EXEC"
-SQL_STMT$ = "SELECT * FROM people ORDER BY name ASC"
-GOSUB CALL_SQL
 ```
 
 Filter + sort + limit:
 
 ```basic
-SQL_CMD$ = "EXEC"
-SQL_STMT$ = "SELECT * FROM people WHERE city=Chicago ORDER BY age DESC LIMIT 5"
-GOSUB CALL_SQL
+SQL_STMT$ = "SELECT name,age FROM people "
+SQL_STMT$ = SQL_STMT$ + "WHERE city=Chicago ORDER BY age DESC "
+SQL_STMT$ = SQL_STMT$ + "LIMIT 5"
 ```
+
+**WHERE operators:**
+
+| Operator | Meaning     |
+|----------|-------------|
+| `=`      | Equal       |
+| `<`      | Less than   |
+| `>`      | Greater than|
+| `<=`     | Less/equal  |
+| `>=`     | Greater/equal|
+| `<>`     | Not equal   |
+| `LIKE`   | Pattern match (% wildcard) |
+
+**LIKE wildcards:**
+
+| Pattern   | Meaning                        |
+|-----------|--------------------------------|
+| `%text%`  | Contains (substring match)     |
+| `text%`   | Starts with (prefix match)     |
+| `%text`   | Ends with (suffix match)       |
+| `text`    | Exact match (no wildcard)      |
 
 **ORDER BY details:**
 
@@ -421,21 +496,34 @@ GOSUB CALL_SQL
 
 Format:
 
-`UPDATE t KEY k SET col=value`
+* `UPDATE t KEY k SET col=val` (single row, by KEY)
+* `UPDATE t KEY k SET col1=val1,col2=val2` (multi-column SET)
+* `UPDATE t SET col=val WHERE cond` (bulk, by WHERE)
 
-**Example**
+**Examples**
+
+Single key update:
 
 ```basic
-SQL_CMD$ = "EXEC"
 SQL_STMT$ = "UPDATE people KEY bob SET city=Denver"
-GOSUB CALL_SQL
+```
+
+Multi-column SET:
+
+```basic
+SQL_STMT$ = "UPDATE people KEY bob SET city=Denver,age=31"
+```
+
+Bulk update by WHERE:
+
+```basic
+SQL_STMT$ = "UPDATE people SET city=Denver WHERE age<30"
 ```
 
 Behavior:
 
-* Retrieves the existing record by key
-* Modifies the specified column in memory
-* Re-puts the record via ISAM (overwrites)
+* KEY-based: retrieves record, modifies, re-puts (overwrites)
+* WHERE-based: scans all rows, evaluates WHERE, updates matches
 
 ---
 
@@ -448,15 +536,14 @@ Format:
 **Example**
 
 ```basic
-SQL_CMD$ = "EXEC"
 SQL_STMT$ = "REPLACE people KEY bob VALUES (Bob,30,Denver)"
-GOSUB CALL_SQL
 ```
 
 Behavior:
 
 * Creates a fresh record with all columns from VALUES
 * Puts it via ISAM (overwrites any existing record with that key)
+* Duplicates are allowed (unlike INSERT)
 
 ---
 
@@ -464,20 +551,22 @@ Behavior:
 
 Format:
 
-`DELETE FROM t KEY k`
+* `DELETE FROM t KEY k` (single row)
+* `DELETE FROM t WHERE cond` (bulk)
 
-**Example**
+**Examples**
+
+Single key delete:
 
 ```basic
-SQL_CMD$ = "EXEC"
 SQL_STMT$ = "DELETE FROM people KEY bob"
-GOSUB CALL_SQL
 ```
 
-Behavior:
+Bulk delete by WHERE:
 
-* Removes the record from the ISAM file by key.
-* No tombstone entries.
+```basic
+SQL_STMT$ = "DELETE FROM people WHERE age<18"
+```
 
 ---
 
@@ -490,9 +579,7 @@ Format:
 **Example**
 
 ```basic
-SQL_CMD$ = "EXEC"
 SQL_STMT$ = "DROP TABLE people"
-GOSUB CALL_SQL
 ```
 
 Behavior:
@@ -500,6 +587,60 @@ Behavior:
 * Empties the table's ISAM file and removes its schema entry.
 * The ISAM file still exists on disk (empty) and can be re-created
   with CREATE TABLE.
+
+---
+
+### SHOW TABLES
+
+Lists all tables in the current database.
+
+```basic
+SQL_STMT$ = "SHOW TABLES"
+```
+
+Output in `SQL_RESULT$`: one table name per line.
+
+---
+
+### DESCRIBE
+
+Shows schema for a table.
+
+```basic
+SQL_STMT$ = "DESCRIBE people"
+```
+
+Output format:
+
+```
+TBL=people
+COLS=name,age,city
+PK=key
+```
+
+---
+
+### ALTER TABLE
+
+Add or drop a column from an existing table.
+
+`ALTER TABLE t ADD col`
+
+`ALTER TABLE t DROP col`
+
+**Examples**
+
+```basic
+SQL_STMT$ = "ALTER TABLE people ADD email"
+SQL_STMT$ = "ALTER TABLE people DROP age"
+```
+
+Notes:
+
+* ADD requires the column name not to already exist.
+* DROP removes the column from the schema only — existing ISAM
+  records still contain the old data (unused fields are ignored).
+* The PK column cannot be dropped via ALTER.
 
 ---
 
@@ -548,9 +689,6 @@ Only SELECT allowed via EXEC. Writes return an error.
 
 ```basic
 SQL_MODE$ = "RO"
-SQL_CMD$ = "EXEC"
-SQL_STMT$ = "SELECT * FROM people"
-GOSUB CALL_SQL
 ```
 
 ### AO (Append-only)
@@ -559,9 +697,6 @@ Only INSERT allowed via EXEC. Updates/deletes are blocked.
 
 ```basic
 SQL_MODE$ = "AO"
-SQL_CMD$ = "EXEC"
-SQL_STMT$ = "INSERT INTO log KEY e1 VALUES (HELLO)"
-GOSUB CALL_SQL
 ```
 
 ---
@@ -582,23 +717,18 @@ Each log line is pipe-delimited:
 |-----------|----------------------------------|
 | `OPEN`    | Database opened, transaction start |
 | `CLOSED`  | Database closed, txn rollback/commit |
-| `UPDATED` | CREATE TABLE, UPDATE, REPLACE    |
+| `UPDATED` | CREATE TABLE, UPDATE, REPLACE, ALTER, SHOW |
 | `APPENDED`| INSERT                           |
 | `DELETED` | DELETE, DROP TABLE               |
 | `WARNING` | Mode violation (RO/AO)           |
 | `ERROR`   | Transaction abort                |
 
-### Example log output
+### Log control
 
-```
-HDR|testdb|0.4.0|2026-05-28T14:30:45
-OPT|100|0.4.0
-OPT|101|0
-...
-EVENT|OPEN|2026-05-28T14:30:46|Database testdb opened
-EVENT|APPENDED|2026-05-28T14:30:50|INSERT people KEY alice
-EVENT|CLOSED|2026-05-28T14:30:52|Database session end
-```
+Logging behavior is controlled by option codes:
+
+- OPT 200 (LOG_ENABLED): `0` disables all logging
+- OPT 201 (LOG_LEVEL): `0`=errors only, `1`=normal, `2`=verbose
 
 ---
 
@@ -612,7 +742,7 @@ are pre-allocated with defaults.
 
 | Code | Name            | Default  | Description             |
 |------|-----------------|----------|-------------------------|
-| 100  | VERSION         | `0.4.0`  | Database version        |
+| 100  | VERSION         | `0.5.0`  | Database version        |
 | 101  | AUTOCOMPACT     | `0`      | Auto-compact on startup |
 | 102  | MAXREC          | `10000`  | Max records per file    |
 | 103-109 | (reserved)   | `0`      | Future use              |
@@ -643,7 +773,10 @@ Always check `SQL_STATUS`. `SQL_MSG$` gives a short hint:
 
 * `INSERTED people KEY alice`
 * `UPDATED people KEY bob`
+* `UPDATED 5 ROWS IN people` (bulk)
 * `READ-ONLY MODE`
+* `COUNT=42`
+* `TBL=people / COLS=name,age,city / PK=key`
 
 ### SQL_RESULT$
 
@@ -701,12 +834,15 @@ GT1:
 | `20` | read-only mode blocked a write    |
 | `21` | append-only mode blocked non-INSERT |
 | `30..33` | CREATE parse / table exists    |
-| `40..46` | INSERT parse / missing table   |
+| `40..47` | INSERT parse / missing table / dup key |
 | `50..52` | SELECT parse errors            |
 | `60..66` | UPDATE parse / key not found   |
 | `70..75` | REPLACE parse errors            |
 | `80..82` | DELETE parse errors            |
 | `85..86` | DROP parse / missing table     |
+| `87`   | ALTER parse / column error      |
+| `88`   | SHOW parse error                 |
+| `89`   | DESCRIBE parse error             |
 | `90..91` | SEARCH parse / missing table   |
 | `98`   | internal empty record protection  |
 | `99`   | unknown command                   |
@@ -731,6 +867,8 @@ Tip: always print both `SQL_STATUS` and `SQL_MSG$`.
 
 5. The log file grows unbounded. Periodically clear it by deleting
    `<db>.log.dat` or running INITDB again (recreates the header).
+
+6. Use ALTER TABLE to evolve schemas without data loss.
 
 ---
 
@@ -772,73 +910,7 @@ MiniSQL is intentionally simple:
 
 * no quoting/escaping
 * values cannot safely contain `,` or `|`
-* WHERE is simple `col=value` (no expression evaluation)
-* no JOIN/GROUP BY/aggregate functions
+* no JOIN/GROUP BY/subqueries
 * no type enforcement (everything is text)
 * ORDER BY uses string comparison, not numeric
 * ORDER BY limited to 500 rows in memory
-
----
-
-## Quick Walkthrough Example (full flow)
-
-```basic
-REM Setup
-SQL_DB$ = "TESTDB"
-SQL_MODE$ = "RW"
-
-REM Init
-SQL_CMD$ = "INITDB"
-SQL_STMT$ = ""
-GOSUB CALL_SQL
-
-REM Create table
-SQL_CMD$ = "EXEC"
-SQL_STMT$ = "CREATE TABLE people (name,age,city) PK KEY"
-GOSUB CALL_SQL
-
-REM Insert
-SQL_STMT$ = "INSERT INTO people KEY alice VALUES (Alice,25,Chicago)"
-GOSUB CALL_SQL
-
-REM Update
-SQL_STMT$ = "UPDATE people KEY alice SET city=Boston"
-GOSUB CALL_SQL
-
-REM Select with ORDER BY
-SQL_STMT$ = "SELECT * FROM people ORDER BY name ASC"
-GOSUB CALL_SQL
-
-REM SEARCH with PREFIX match
-SQL_CMD$ = "SEARCH"
-SQL_STMT$ = "people|Bos|city|PREFIX"
-GOSUB CALL_SQL
-
-REM Done
-END
-
-CALL_SQL:
-  SQL_STATUS = 0
-  SQL_MSG$ = ""
-  SQL_RESULT$ = ""
-  CHAIN "minisql"
-  PRINT "STATUS:"; SQL_STATUS
-  PRINT "MSG   :"; SQL_MSG$
-  IF SQL_RESULT$<>"" THEN GOSUB PRINT_RES
-  RETURN
-
-PRINT_RES:
-  S$ = SQL_RESULT$
-  P = 1
-PR1:
-  N = INSTR(MID$(S$, P), CHR$(10))
-  IF N=0 THEN
-    L$ = MID$(S$, P)
-    IF TRIM$(L$)<>"" THEN PRINT L$
-    RETURN
-  END IF
-  L$ = MID$(S$, P, N-1)
-  IF TRIM$(L$)<>"" THEN PRINT L$
-  P = P + N
-  GOTO PR1
-```

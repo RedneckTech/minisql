@@ -1,4 +1,4 @@
-# MiniSQL (TIMESHARING BASIC) v0.4.0 — Chainable Tiny SQL-ish Database
+# MiniSQL (TIMESHARING BASIC) v0.5.0 — Chainable Tiny SQL-ish Database
 
 MiniSQL is a small, **chainable** SQL-ish database engine written for
 **TIMESHARING BASIC / 3270BBS-style BASIC**.
@@ -25,13 +25,18 @@ projects without rewriting storage/search logic every time.
   
   - Table schemas stored in a system ISAM table (`<db>.schema.idx`)
 
-- **Full CRUD + DROP**
+- **Full CRUD + DROP + ALTER + SHOW + DESCRIBE**
   
   - CREATE TABLE, INSERT, SELECT, UPDATE, REPLACE, DELETE, DROP TABLE
+  - ALTER TABLE (ADD / DROP col), SHOW TABLES, DESCRIBE table
 
 - **ORDER BY with sorting**
   
   - `ORDER BY col [ASC|DESC]` with in-memory insertion sort (up to 500 rows)
+
+- **Auto-increment keys**
+  
+  - Omit KEY or use `KEY *` for auto-generated numeric keys
 
 - **Read-only and append-only modes**
   
@@ -40,9 +45,21 @@ projects without rewriting storage/search logic every time.
 
 - **Search and filtering**
   
-  - `SELECT ... WHERE col=value` or `WHERE KEY=val`
+  - `SELECT col1,col2 FROM t` (column filtering)
+  - `SELECT DISTINCT col FROM t` (deduplication)
+  - `SELECT COUNT(*) FROM t` (aggregate)
+  - `SELECT ... WHERE cond AND/OR cond` (multi-condition)
+  - `SELECT ... WHERE col <value`, `>`, `<=`, `>=`, `<>` (comparison)
+  - `SELECT ... WHERE col LIKE %pattern%` (pattern matching)
+  - `WHERE KEY=val` (fast ISAM keyed lookup)
   - `LIMIT n`
   - `SEARCH` with modes: CONTAINS, EXACT, PREFIX, SUFFIX
+
+- **Bulk UPDATE / DELETE by WHERE**
+  
+  - `UPDATE t SET col=val WHERE cond` (not just KEY-based)
+  - `DELETE FROM t WHERE cond` (not just KEY-based)
+  - Multi-column SET: `SET col1=val1,col2=val2`
 
 - **Transaction-style batching**
   
@@ -71,7 +88,7 @@ projects without rewriting storage/search logic every time.
 
 ## Project Files
 
-- `minisql.bas` — the chainable database engine (851 lines)
+- `minisql.bas` — the chainable database engine (1386 lines)
 
 ---
 
@@ -134,12 +151,17 @@ PRINT SQL_RESULT$
 | Statement                      | Description                |
 |--------------------------------|----------------------------|
 | `CREATE TABLE t (a,b,c) PK k` | Create table               |
-| `INSERT INTO t KEY k VALUES (v1,v2,...)` | Insert row    |
-| `SELECT * FROM t [WHERE ...] [ORDER BY ...] [LIMIT n]` | Query |
-| `UPDATE t KEY k SET col=val`  | Update column              |
+| `INSERT INTO t [KEY k|*] VALUES (...)` | Insert (auto-key opt)|
+| `SELECT [DISTINCT] [col|*] FROM t [WHERE...] [ORDER BY...] [LIMIT n]` | Query |
+| `SELECT COUNT(*) FROM t [WHERE...]` | Count rows          |
+| `UPDATE t [KEY k|SET col=val WHERE cond]` | Update (key/bulk) |
 | `REPLACE t KEY k VALUES (...)`| Replace entire row         |
-| `DELETE FROM t KEY k`         | Delete by key              |
+| `DELETE FROM t [KEY k|WHERE cond]` | Delete (key/bulk)   |
 | `DROP TABLE t`                | Drop table                 |
+| `SHOW TABLES`                 | List tables                |
+| `DESCRIBE t`                  | Show table schema          |
+| `ALTER TABLE t ADD col`       | Add column                 |
+| `ALTER TABLE t DROP col`      | Drop column                |
 
 ---
 
