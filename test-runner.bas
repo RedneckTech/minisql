@@ -1,7 +1,7 @@
 REM ==============================================================
 REM  MiniSQL Test Runner  —  runs all test*.bas programs
 REM ==============================================================
-REM  Usage: CHAIN "tests/test-runner.bas"  (or RUN from BASIC)
+REM  Usage: CHAIN "test-runner.bas"  (or RUN from BASIC)
 REM
 REM  Each test creates its own table(s) prefixed with "tst-" and
 REM  cleans up before exiting.  The runner prints PASS/FAIL for
@@ -43,7 +43,7 @@ TOTAL = 13
 FOR TI = 1 TO TOTAL
     PRINT "["; TI; "/"; TOTAL; "] Running "; TN$(TI); "..."
     
-    CHAIN "tests/" + TN$(TI) + ".bas"
+    CHAIN TN$(TI) + ".bas"
     
     IF SQL_STATUS = 0 THEN
         PRINT "  PASS"; TAB(40); SQL_MSG$
