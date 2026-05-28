@@ -89,9 +89,9 @@ REM ==============================================================
 REM  Init/Open log file and read options header
 REM ==============================================================
 InitLog:
-    LOGFN$ = DBPFX$ + ".log.dat"
-    BATFN$ = "batch.dat"
-    SYSFN$ = DBPFX$ + ".schema.idx"
+    LOGF$ = DBPFX$ + ".log.dat"
+    BATF$ = "batch.dat"
+    SYSF$ = DBPFX$ + ".schema.idx"
 
     DIM OPT{}
     OPT{"100"} = "0.5.0"
@@ -111,10 +111,10 @@ InitLog:
         OPT{STR$(I)} = "0"
     NEXT I
 
-    OPEN LOGFN$ FOR INPUT AS #1
+    OPEN LOGF$ FOR INPUT AS #1
     IF EOF(1) THEN
         CLOSE #1
-        OPEN LOGFN$ FOR OUTPUT AS #1
+        OPEN LOGF$ FOR OUTPUT AS #1
         HDR$ = "HDR|" + DBPFX$ + "|" + OPT{"100"} + "|"
         PRINT #1, HDR$ + DATE$() + "T" + TIME$()
         PRINT #1, "OPT|100|" + OPT{"100"}
@@ -148,7 +148,7 @@ InitLog:
     WEND
     CLOSE #1
 
-    OPEN LOGFN$ FOR APPEND AS #1
+    OPEN LOGF$ FOR APPEND AS #1
     LBL$ = "OPEN"
     MSG$ = "Database " + DBPFX$ + " opened"
     GOSUB LogEvent
@@ -181,9 +181,9 @@ InitDB:
     RETURN
 
 EnsureSchemaTable:
-    OPEN SYSFN$ FOR INPUT AS #2
+    OPEN SYSF$ FOR INPUT AS #2
     CLOSE #2
-    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     S{"name"} = "_schema_meta"
     S{"value"} = "v1"
@@ -200,7 +200,7 @@ GetSchema:
     COLS$ = ""
     PK$ = ""
     SEQ = 0
-    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     GET #2, S{}, KEY = TBL$
     IF FOUND(2) THEN
@@ -213,7 +213,7 @@ GetSchema:
 
 PutSchema:
     REM IN: TBL$, COLS$, PK$  (SEQ optional, default 1)
-    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     S{"name"} = TBL$
     S{"cols"} = COLS$
@@ -225,7 +225,7 @@ PutSchema:
 
 UpdateSeq:
     REM IN: TBL$, new SEQ value
-    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     GET #2, S{}, KEY = TBL$
     IF FOUND(2) THEN
@@ -237,7 +237,7 @@ UpdateSeq:
 
 DelSchema:
     REM IN: TBL$
-    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
     DELETE #2, KEY = TBL$
     CLOSE #2
     RETURN
@@ -246,15 +246,15 @@ DelSchema:
 REM ==============================================================
 REM  Table file helpers
 REM ==============================================================
-GetTableFN:
-    REM IN: TBL$  OUT: TFN$
-    TFN$ = DBPFX$ + "." + TBL$ + ".idx"
+GetTableF:
+    REM IN: TBL$  OUT: TF$
+    TF$ = DBPFX$ + "." + TBL$ + ".idx"
     RETURN
 
 OpenTableISAM:
     REM IN: TBL$  Uses #3
-    GOSUB GetTableFN
-    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    GOSUB GetTableF
+    OPEN TF$ FOR INDEXED AS #3 KEY = "key"
     RETURN
 
 CloseTableISAM:
@@ -272,14 +272,14 @@ ExecSQL:
     UP$ = UCASE$(ST$)
 
     IF OPT{"300"} = "1" THEN
-        OPEN BATFN$ FOR INPUT AS #4
+        OPEN BATF$ FOR INPUT AS #4
         IF NOT EOF(4) THEN
             INPUT #4, L$
             L$ = TRIM$(L$)
             IF L$ = "BEGIN" THEN
                 CLOSE #4
                 IF LEFT$(UP$, 6) <> "SELECT" THEN
-                    OPEN BATFN$ FOR APPEND AS #4
+                    OPEN BATF$ FOR APPEND AS #4
                     PRINT #4, ST$
                     CLOSE #4
                     SQL_MSG$ = "QUEUED (TXN)"
@@ -359,8 +359,8 @@ DoCreate:
         IF PK$ = "" THEN PK$ = "key"
     END IF
 
-    GOSUB GetTableFN
-    OPEN TFN$ FOR OUTPUT AS #3
+    GOSUB GetTableF
+    OPEN TF$ FOR OUTPUT AS #3
     CLOSE #3
 
     GOSUB PutSchema
@@ -412,8 +412,8 @@ DoInsert:
         KEY$ = STR$(SEQ)
         GOSUB UpdateSeq
     ELSE
-        TFN$ = DBPFX$ + "." + TBL$ + ".idx"
-        OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+        TF$ = DBPFX$ + "." + TBL$ + ".idx"
+        OPEN TF$ FOR INDEXED AS #3 KEY = "key"
         DIM D{}
         GET #3, D{}, KEY = KEY$
         CLOSE #3
@@ -463,8 +463,8 @@ AppendRecord:
         CI = CI + 1
     WEND
 
-    TFN$ = DBPFX$ + "." + STEMP$ + ".idx"
-    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    TF$ = DBPFX$ + "." + STEMP$ + ".idx"
+    OPEN TF$ FOR INDEXED AS #3 KEY = "key"
     PUT #3, R{}
     CLOSE #3
     LBL$ = "APPENDED"
@@ -567,8 +567,8 @@ DoSelect:
     SPK$ = PK$
 
     IF WHEREKEY = 1 THEN
-        TFN$ = DBPFX$ + "." + STBL$ + ".idx"
-        OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+        TF$ = DBPFX$ + "." + STBL$ + ".idx"
+        OPEN TF$ FOR INDEXED AS #3 KEY = "key"
         DIM R{}
         GET #3, R{}, KEY = WKEYVAL$
         IF FOUND(3) THEN
@@ -580,8 +580,8 @@ DoSelect:
         RETURN
     END IF
 
-    TFN$ = DBPFX$ + "." + STBL$ + ".idx"
-    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    TF$ = DBPFX$ + "." + STBL$ + ".idx"
+    OPEN TF$ FOR INDEXED AS #3 KEY = "key"
     DIM R{}
     RESET #3
 
@@ -880,8 +880,8 @@ DoUpdate:
             RETURN
         END IF
 
-        TFN$ = DBPFX$ + "." + TBL$ + ".idx"
-        OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+        TF$ = DBPFX$ + "." + TBL$ + ".idx"
+        OPEN TF$ FOR INDEXED AS #3 KEY = "key"
         DIM R{}
         GET #3, R{}, KEY = KEY$
         IF NOT FOUND(3) THEN
@@ -920,8 +920,8 @@ DoUpdate:
     ELSEIF UWP > 0 AND UWP < USP THEN
         W$ = TRIM$(MID$(REST$, UWP+5, USP-UWP-5))
 
-        TFN$ = DBPFX$ + "." + TBL$ + ".idx"
-        OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+        TF$ = DBPFX$ + "." + TBL$ + ".idx"
+        OPEN TF$ FOR INDEXED AS #3 KEY = "key"
         DIM R{}
         RESET #3
         UPDCNT = 0
@@ -1020,8 +1020,8 @@ DoReplace:
         CI = CI + 1
     WEND
 
-    TFN$ = DBPFX$ + "." + TBL$ + ".idx"
-    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    TF$ = DBPFX$ + "." + TBL$ + ".idx"
+    OPEN TF$ FOR INDEXED AS #3 KEY = "key"
     PUT #3, R{}
     CLOSE #3
     LBL$ = "UPDATED"
@@ -1054,8 +1054,8 @@ DoDelete:
 
     IF PKPOS > 0 THEN
         KEY$ = TRIM$(MID$(REST$, PKPOS+3))
-        TFN$ = DBPFX$ + "." + TBL$ + ".idx"
-        OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+        TF$ = DBPFX$ + "." + TBL$ + ".idx"
+        OPEN TF$ FOR INDEXED AS #3 KEY = "key"
         DELETE #3, KEY = KEY$
         CLOSE #3
         LBL$ = "DELETED"
@@ -1067,8 +1067,8 @@ DoDelete:
     ELSEIF WP > 0 THEN
         W$ = TRIM$(MID$(REST$, WP+5))
 
-        TFN$ = DBPFX$ + "." + TBL$ + ".idx"
-        OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+        TF$ = DBPFX$ + "." + TBL$ + ".idx"
+        OPEN TF$ FOR INDEXED AS #3 KEY = "key"
         DIM R{}
         RESET #3
         DELCNT = 0
@@ -1111,8 +1111,8 @@ DoDrop:
         RETURN
     END IF
 
-    GOSUB GetTableFN
-    OPEN TFN$ FOR OUTPUT AS #3
+    GOSUB GetTableF
+    OPEN TF$ FOR OUTPUT AS #3
     CLOSE #3
 
     GOSUB DelSchema
@@ -1130,7 +1130,7 @@ DoShow:
         RETURN
     END IF
     SQL_RESULT$ = ""
-    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     RESET #2
     WHILE NOT EOF(2)
@@ -1246,8 +1246,8 @@ SearchCmd:
     SPK$ = PK$
     STERM$ = UCASE$(TERM$)
 
-    TFN$ = DBPFX$ + "." + STBL$ + ".idx"
-    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    TF$ = DBPFX$ + "." + STBL$ + ".idx"
+    OPEN TF$ FOR INDEXED AS #3 KEY = "key"
     DIM R{}
     RESET #3
     RC = 0
@@ -1316,7 +1316,7 @@ REM ==============================================================
 REM  TRANSACTIONS using batch.dat
 REM ==============================================================
 TxnBegin:
-    OPEN BATFN$ FOR OUTPUT AS #4
+    OPEN BATF$ FOR OUTPUT AS #4
     PRINT #4, "BEGIN"
     CLOSE #4
     LBL$ = "OPEN": MSG$ = "Transaction started": GOSUB LogEvent
@@ -1324,14 +1324,14 @@ TxnBegin:
     RETURN
 
 TxnRollback:
-    OPEN BATFN$ FOR OUTPUT AS #4
+    OPEN BATF$ FOR OUTPUT AS #4
     CLOSE #4
     LBL$ = "CLOSED": MSG$ = "Transaction rolled back": GOSUB LogEvent
     SQL_MSG$ = "TXN ROLLBACK"
     RETURN
 
 TxnCommit:
-    OPEN BATFN$ FOR INPUT AS #4
+    OPEN BATF$ FOR INPUT AS #4
     IF EOF(4) THEN CLOSE #4: SQL_MSG$="NO TXN": RETURN
     INPUT #4, L$
     L$ = TRIM$(L$)
@@ -1350,7 +1350,7 @@ TxnCommit:
             GOSUB ExecSQL
             IF SQL_STATUS <> 0 THEN
                 CLOSE #4
-                OPEN BATFN$ FOR OUTPUT AS #4
+                OPEN BATF$ FOR OUTPUT AS #4
                 CLOSE #4
                 SQL_STMT$ = OLD$
                 SQL_MODE$ = OLDM$
@@ -1366,7 +1366,7 @@ TxnCommit:
     WEND
     CLOSE #4
 
-    OPEN BATFN$ FOR OUTPUT AS #4
+    OPEN BATF$ FOR OUTPUT AS #4
     CLOSE #4
     SQL_STMT$ = OLD$
     SQL_MODE$ = OLDM$
