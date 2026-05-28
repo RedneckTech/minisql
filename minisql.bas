@@ -624,7 +624,7 @@ DoSelect:
         ROWS = ROWS + 1
         IF LIMIT > 0 AND ROWS >= LIMIT THEN EXIT WHILE
 SNX3:
-        IF (ROWS MOD 50) = 0 THEN X = SLEEP(0.25)
+        WC = ROWS: GOSUB Watchdog
     WEND
     CLOSE #3
 
@@ -699,8 +699,17 @@ SortResultRows:
                 RSLT$(SJ) = TMP$
             END IF
         NEXT SJ
-        IF (SI MOD 50) = 0 THEN X = SLEEP(0.25)
+        WC = SI: GOSUB Watchdog
     NEXT SI
+    RETURN
+
+
+REM ==============================================================
+REM  Watchdog — yield CPU every 50 iterations
+REM  IN: WC (counter)  sleeps when WC MOD 50 = 0
+REM ==============================================================
+Watchdog:
+    IF (WC MOD 50) = 0 THEN X = SLEEP(0.25)
     RETURN
 
 
@@ -939,7 +948,7 @@ DoUpdate:
                 UPDCNT = UPDCNT + 1
             END IF
 UPBX:
-            IF (UPDCNT MOD 50) = 0 THEN X = SLEEP(0.25)
+            WC = UPDCNT: GOSUB Watchdog
         WEND
         CLOSE #3
         LBL$ = "UPDATED"
@@ -1072,7 +1081,7 @@ DoDelete:
                 DELCNT = DELCNT + 1
             END IF
 DLNX:
-            IF (DELCNT MOD 50) = 0 THEN X = SLEEP(0.25)
+            WC = DELCNT: GOSUB Watchdog
         WEND
         CLOSE #3
         LBL$ = "DELETED"
@@ -1263,11 +1272,11 @@ SearchCmd:
             IF MATCH = 1 THEN GOSUB BuildResultRow
         END IF
 SCNX3:
-        IF (RC MOD 50) = 0 THEN X = SLEEP(0.25)
-    WEND
-    CLOSE #3
-    SQL_MSG$ = "OK"
-    RETURN
+            WC = RC: GOSUB Watchdog
+        WEND
+        CLOSE #3
+        SQL_MSG$ = "OK"
+        RETURN
 
 REM  Match a field value against the search term
 REM  IN: C$, R{}, STERM$, SMODE$  OUT: MATCH
