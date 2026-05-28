@@ -1,27 +1,28 @@
 REM ==============================================================
-REM  MINISQL.BAS  (LABEL-BASED / CHAINABLE)
-REM  Version: 0.3.25
+REM  MINISQL.BAS  v0.4.0  (LABEL-BASED / CHAINABLE)
 REM --------------------------------------------------------------
-REM  Uses COMMON + CHAIN library style. When this program ENDs,
-REM  control returns to the caller after CHAIN, with COMMON kept.
+REM  ISAM-based SQL engine for 3270BBS.
+REM  Uses the platform's built-in INDEXED file system as the
+REM  storage foundation instead of custom flat-file management.
 REM
-REM  FILENAMES: underscores are NOT used. We use dashes:
-REM    <DB>-idx.dat   (schemas, index, metadata)
-REM    <DB>-db1.dat   (data, max 256KB per file)
-REM    <DB>-db2.dat ...
-REM    <DB>-txn.dat   (transaction batch file)
+REM  FILENAMES:
+REM    <db>.<table>.idx   - ISAM file per user table
+REM    <db>.schema.idx    - ISAM system table for schemas
+REM    <db>.log.dat        - event log (file handle #1, always open)
+REM    batch.dat           - transaction batch queue
 REM
-REM  FILE HANDLE LIMIT: only #1..#4 may be open at once, so we
-REM  keep at most 1-2 open and CLOSE quickly.
-REM
-REM  WATCHDOG SAFE: loops call SLEEP(0.25).
+REM  FILE HANDLES:
+REM    #1 - log file (kept open during session)
+REM    #2 - schema ISAM (open/close per use)
+REM    #3 - target table ISAM (open/close per operation)
+REM    #4 - batch file (intermittent)
 REM
 REM  COMMON API:
 REM    SQL_CMD$    = "INITDB"|"EXEC"|"BEGIN"|"COMMIT"
-REM                  "ROLLBACK"|"SEARCH"|"COMPACT"|"REINDEX"
-REM    SQL_DB$     = database prefix (sanitize '_' -> '-' filenames)
-REM    SQL_STMT$   = SQL statement (EXEC) or search spec (SEARCH)
-REM    SQL_MODE$   = "RW" default | "RO" read-only | "AO" append-only
+REM                  "ROLLBACK"|"SEARCH"
+REM    SQL_DB$     = database prefix
+REM    SQL_STMT$   = SQL statement or search spec
+REM    SQL_MODE$   = "RW"|"RO"|"AO"
 REM
 REM  OUTPUTS:
 REM    SQL_STATUS  = 0 ok, nonzero error
@@ -30,6 +31,9 @@ REM    SQL_RESULT$ = results (lines separated by CHR$(10))
 REM ==============================================================
 REM Copyright 2025 by FARMER. ALL rights reserved
 
+REM ==============================================================
+REM  Program start
+REM ==============================================================
 START:
     COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$
     COMMON SQL_RESULT$, SQL_STATUS, SQL_MSG$
@@ -38,13 +42,6 @@ START:
     SQL_MSG$ = ""
     SQL_RESULT$ = ""
 
-    MAXFILE = 262144
-    YIELDSEC = 0.25
-
-    CMD$ = UCASE$(TRIM$(SQL_CMD$))
-    IF SQL_MODE$ = "" THEN SQL_MODE$ = "RW"
-    SQL_MODE$ = UCASE$(SQL_MODE$)
-
     IF SQL_DB$ = "" THEN
         SQL_STATUS = 10
         SQL_MSG$ = "SQL_DB$ REQUIRED"
@@ -52,35 +49,31 @@ START:
     END IF
 
     GOSUB SanitizeDB
-    GOSUB BuildNames
+    GOSUB InitLog
+
+    CMD$ = UCASE$(TRIM$(SQL_CMD$))
+    IF SQL_MODE$ = "" THEN SQL_MODE$ = "RW"
+    SQL_MODE$ = UCASE$(SQL_MODE$)
 
     SELECT CASE CMD$
-        CASE "INITDB"
-            GOSUB InitDB
-        CASE "EXEC"
-            GOSUB ExecSQL
-        CASE "BEGIN"
-            GOSUB TxnBegin
-        CASE "COMMIT"
-            GOSUB TxnCommit
-        CASE "ROLLBACK"
-            GOSUB TxnRollback
-        CASE "SEARCH"
-            GOSUB SearchCmd
-        CASE "COMPACT"
-            GOSUB CompactIdx
-        CASE "REINDEX"
-            GOSUB ReindexAll
+        CASE "INITDB":   GOSUB InitDB
+        CASE "EXEC":     GOSUB ExecSQL
+        CASE "BEGIN":    GOSUB TxnBegin
+        CASE "COMMIT":   GOSUB TxnCommit
+        CASE "ROLLBACK": GOSUB TxnRollback
+        CASE "SEARCH":   GOSUB SearchCmd
         CASE ELSE
             SQL_STATUS = 99
             SQL_MSG$ = "UNKNOWN CMD"
     END SELECT
 
+    LBL$ = "CLOSED": MSG$ = "Database session end": GOSUB LogEvent
+    CLOSE #1
     END
 
 
 REM ==============================================================
-REM  Helpers: sanitize DB name for filenames ( '_' -> '-' )
+REM  Helpers: sanitize DB name ( '_' -> '-' )
 REM ==============================================================
 SanitizeDB:
     DBPFX$ = ""
@@ -93,293 +86,198 @@ SanitizeDB:
 
 
 REM ==============================================================
-REM  Helpers: build filenames
+REM  Init/Open log file and read options header
 REM ==============================================================
-BuildNames:
-    IDXFN$ = DBPFX$ + "-idx.dat"
-    TXNFN$ = DBPFX$ + "-txn.dat"
-    RETURN
+InitLog:
+    LOGFN$ = DBPFX$ + ".log.dat"
+    BATFN$ = "batch.dat"
+    SYSFN$ = DBPFX$ + ".schema.idx"
 
-MakeDBName:
-    REM IN: FN  OUT: DBFN$
-    DBFN$ = DBPFX$ + "-db" + STR$(FN) + ".dat"
-    RETURN
+    DIM OPT{}
+    OPT{"100"} = "0.4.0"
+    OPT{"101"} = "0"
+    OPT{"102"} = "10000"
+    FOR I = 103 TO 109
+        OPT{STR$(I)} = "0"
+    NEXT I
+    OPT{"200"} = "1"
+    OPT{"201"} = "1"
+    FOR I = 202 TO 209
+        OPT{STR$(I)} = "0"
+    NEXT I
+    OPT{"300"} = "1"
+    OPT{"301"} = "100"
+    FOR I = 302 TO 309
+        OPT{STR$(I)} = "0"
+    NEXT I
 
-REM ==============================================================
-REM  Ensure a file exists, creating it with OUTPUT when empty/missing
-REM ==============================================================
-EnsureFile:
-    REM IN: FNAME$
-    OPEN FNAME$ FOR INPUT AS #1
+    OPEN LOGFN$ FOR INPUT AS #1
     IF EOF(1) THEN
         CLOSE #1
-        OPEN FNAME$ FOR OUTPUT AS #1
-        CLOSE #1
+        OPEN LOGFN$ FOR OUTPUT AS #1
+        PRINT #1, "HDR|" + DBPFX$ + "|" + OPT{"100"} + "|" + DATE$() + "T" + TIME$()
+        PRINT #1, "OPT|100|" + OPT{"100"}
+        FOR I = 101 TO 109
+            PRINT #1, "OPT|" + STR$(I) + "|" + OPT{STR$(I)}
+        NEXT I
+        FOR I = 200 TO 209
+            PRINT #1, "OPT|" + STR$(I) + "|" + OPT{STR$(I)}
+        NEXT I
+        FOR I = 300 TO 309
+            PRINT #1, "OPT|" + STR$(I) + "|" + OPT{STR$(I)}
+        NEXT I
+        LBL$ = "OPEN": MSG$ = "Log created for database " + DBPFX$: GOSUB LogEvent
         RETURN
     END IF
+
+    WHILE NOT EOF(1)
+        INPUT #1, L$
+        L$ = TRIM$(L$)
+        IF INSTR(L$, "OPT|") = 1 THEN
+            REST$ = MID$(L$, 5)
+            P = INSTR(REST$, "|")
+            IF P > 0 THEN
+                K$ = LEFT$(REST$, P-1)
+                V$ = MID$(REST$, P+1)
+                OPT{K$} = V$
+            END IF
+        END IF
+    WEND
     CLOSE #1
+
+    OPEN LOGFN$ FOR APPEND AS #1
+    LBL$ = "OPEN": MSG$ = "Database " + DBPFX$ + " opened": GOSUB LogEvent
     RETURN
 
 
+REM ==============================================================
+REM  Log an event with label  (IN: LBL$, MSG$)
+REM ==============================================================
+LogEvent:
+    PRINT #1, "EVENT|" + LBL$ + "|" + DATE$() + "T" + TIME$() + "|" + MSG$
+    RETURN
+
 
 REM ==============================================================
-REM  INITDB: create idx + db1 if missing, seed metadata if idx empty
+REM  INITDB - create schema ISAM and seed it
 REM ==============================================================
 InitDB:
-    REM Create idx + db1 if missing (OUTPUT creates empty files)
-    FNAME$ = IDXFN$
-    GOSUB EnsureFile
+    GOSUB EnsureSchemaTable
+    LBL$ = "OPEN": MSG$ = "Database " + DBPFX$ + " initialized": GOSUB LogEvent
+    SQL_MSG$ = "INITDB OK"
+    RETURN
 
-    FN = 1
-    GOSUB MakeDBName
-    FNAME$ = DBFN$
-    GOSUB EnsureFile
-
-    REM Check if idx is empty
-    EMPTY = 1
-    OPEN IDXFN$ FOR INPUT AS #1
-    IF EOF(1) THEN
-        CLOSE #1
-    ELSE
-        INPUT #1, L$
-        IF TRIM$(L$) <> "" THEN EMPTY = 0
-        CLOSE #1
-    END IF
-
-    IF EMPTY = 0 THEN
-        SQL_MSG$ = "INITDB OK (EXISTS)"
-        RETURN
-    END IF
-
-    REM Seed metadata
-    OPEN IDXFN$ FOR APPEND AS #1
-    PRINT #1, "M|CUR|1"
-    PRINT #1, "M|TXN|0"
-    PRINT #1, "F|1|0"
-    PRINT #1, "R|1|0"
-    CLOSE #1
-
-    SQL_MSG$ = "INITDB OK (CREATED)"
+EnsureSchemaTable:
+    OPEN SYSFN$ FOR INPUT AS #2
+    CLOSE #2
+    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    DIM S{}
+    S{"name"} = "_schema_meta"
+    S{"value"} = "v1"
+    PUT #2, S{}
+    CLOSE #2
     RETURN
 
 
 REM ==============================================================
-REM  Index meta readers (scan idx; latest wins)
+REM  Schema helpers
 REM ==============================================================
-GetMeta:
-    REM IN: METAKEY$ ("CUR" or "TXN")  OUT: METAVAL$
-    METAVAL$ = ""
-    OPEN IDXFN$ FOR INPUT AS #1
-    N = 0
-    WHILE NOT EOF(1)
-        INPUT #1, L$
-        N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)  REM watchdog-safe
-        L$ = TRIM$(L$)
-        IF INSTR(L$, "M|" + METAKEY$ + "|") = 1 THEN
-            METAVAL$ = MID$(L$, LEN("M|" + METAKEY$ + "|") + 1)
-        END IF
-    WEND
-    CLOSE #1
-    RETURN
-
-GetFileBytes:
-    REM IN: FN  OUT: BYTES
-    BYTES = 0
-    OPEN IDXFN$ FOR INPUT AS #1
-    N = 0
-    WHILE NOT EOF(1)
-        INPUT #1, L$
-        N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-        IF INSTR(L$, "F|" + STR$(FN) + "|") = 1 THEN
-            BYTES = VAL(MID$(L$, LEN("F|" + STR$(FN) + "|") + 1))
-        END IF
-    WEND
-    CLOSE #1
-    RETURN
-
-GetFileRecMax:
-    REM IN: FN  OUT: RMAX
-    RMAX = 0
-    OPEN IDXFN$ FOR INPUT AS #1
-    N = 0
-    WHILE NOT EOF(1)
-        INPUT #1, L$
-        N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-        IF INSTR(L$, "R|" + STR$(FN) + "|") = 1 THEN
-            RMAX = VAL(MID$(L$, LEN("R|" + STR$(FN) + "|") + 1))
-        END IF
-    WEND
-    CLOSE #1
-    RETURN
-
 GetSchema:
     REM IN: TBL$  OUT: COLS$, PK$
     COLS$ = ""
     PK$ = ""
-    OPEN IDXFN$ FOR INPUT AS #1
-    N = 0
-    WHILE NOT EOF(1)
-        INPUT #1, L$
-        N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-        IF INSTR(L$, "S|" + TBL$ + "|") = 1 THEN
-            REM S|table|cols|pk
-            REST$ = MID$(L$, LEN("S|" + TBL$ + "|") + 1)
-            P = INSTR(REST$, "|")
-            IF P > 0 THEN
-                COLS$ = LEFT$(REST$, P-1)
-                PK$ = MID$(REST$, P+1)
-            END IF
-        END IF
-    WEND
-    CLOSE #1
-    RETURN
-
-
-REM ==============================================================
-REM  Load index for one table into associative array:
-REM    IDX{"key"} = "file,rec"  (0,0 means deleted)
-REM ==============================================================
-LoadIndexForTable:
-    DIM IDX{}
-    OPEN IDXFN$ FOR INPUT AS #1
-    N = 0
-    WHILE NOT EOF(1)
-        INPUT #1, L$
-        N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-        L$ = TRIM$(L$)
-        IF INSTR(L$, "I|" + TBL$ + "|") = 1 THEN
-            REM I|table|key|file|rec
-            REST$ = MID$(L$, LEN("I|" + TBL$ + "|") + 1)
-            P1 = INSTR(REST$, "|")
-            IF P1 > 0 THEN
-                KEY$ = LEFT$(REST$, P1-1)
-                REST2$ = MID$(REST$, P1+1)
-                P2 = INSTR(REST2$, "|")
-                IF P2 > 0 THEN
-                    F$ = LEFT$(REST2$, P2-1)
-                    R$ = MID$(REST2$, P2+1)
-                    IDX{KEY$} = F$ + "," + R$
-                END IF
-            END IF
-        END IF
-    WEND
-    CLOSE #1
-    RETURN
-
-
-REM ==============================================================
-REM  Fetch record by (file,rec)
-REM ==============================================================
-FetchByPos:
-    REM IN: FNO, RNO  OUT: OUT$
-    OUT$ = ""
-    IF FNO <= 0 OR RNO <= 0 THEN RETURN
-    FN = FNO
-    GOSUB MakeDBName
-    OPEN DBFN$ FOR INPUT AS #1
-    I = 0
-    WHILE NOT EOF(1)
-        INPUT #1, L$
-        I = I + 1
-        IF (I MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-        IF I = RNO THEN OUT$ = L$: CLOSE #1: RETURN
-    WEND
-    CLOSE #1
-    OUT$ = ""
-    RETURN
-
-
-REM ==============================================================
-REM  Append record to current db file (rolls at 256KB)
-REM  Updates idx with:
-REM    M|CUR|n, F|n|bytes, R|n|rec, I|table|key|n|rec
-REM ==============================================================
-AppendRecord:
-    REM IN: REC$, TBL$, KEY$
-    REC$ = TRIM$(REC$)
-    IF REC$ = "" THEN SQL_STATUS = 98: SQL_MSG$="EMPTY RECORD": RETURN
-
-    GOSUB GetMeta
-    METAKEY$ = "CUR": GOSUB GetMeta
-    CURFILE = VAL(METAVAL$)
-    IF CURFILE <= 0 THEN CURFILE = 1
-
-    FN = CURFILE
-    GOSUB GetFileBytes
-    CURB = BYTES
-
-    ADD = LEN(REC$) + 2
-    NEWB = CURB + ADD
-
-    IF NEWB > MAXFILE THEN
-        CURFILE = CURFILE + 1
-        FN = CURFILE
-        GOSUB MakeDBName
-        FNAME$ = DBFN$
-        GOSUB EnsureFile
-        CURB = 0
-        NEWB = ADD
+    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    DIM S{}
+    GET #2, S{}, KEY = TBL$
+    IF FOUND(2) THEN
+        COLS$ = S{"cols"}
+        PK$ = S{"pk"}
     END IF
+    CLOSE #2
+    RETURN
 
-    FN = CURFILE
-    GOSUB GetFileRecMax
-    RNO = RMAX + 1
+PutSchema:
+    REM IN: TBL$, COLS$, PK$
+    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    DIM S{}
+    S{"name"} = TBL$
+    S{"cols"} = COLS$
+    S{"pk"} = PK$
+    PUT #2, S{}
+    CLOSE #2
+    RETURN
 
-    FN = CURFILE
-    GOSUB MakeDBName
-    OPEN DBFN$ FOR APPEND AS #1
-    PRINT #1, REC$
-    CLOSE #1
-
-    OPEN IDXFN$ FOR APPEND AS #1
-    PRINT #1, "M|CUR|"; CURFILE
-    PRINT #1, "F|"; CURFILE; "|"; NEWB
-    PRINT #1, "R|"; CURFILE; "|"; RNO
-    PRINT #1, "I|"; TBL$; "|"; KEY$; "|"; CURFILE; "|"; RNO
-    CLOSE #1
+DelSchema:
+    REM IN: TBL$
+    OPEN SYSFN$ FOR INDEXED AS #2 KEY = "name"
+    DELETE #2, KEY = TBL$
+    CLOSE #2
     RETURN
 
 
 REM ==============================================================
-REM  EXEC SQL: CREATE/INSERT/SELECT/UPDATE/REPLACE/DELETE
-REM  + Transaction queueing (BEGIN/COMMIT/ROLLBACK)
+REM  Table file helpers
+REM ==============================================================
+GetTableFN:
+    REM IN: TBL$  OUT: TFN$
+    TFN$ = DBPFX$ + "." + TBL$ + ".idx"
+    RETURN
+
+OpenTableISAM:
+    REM IN: TBL$  Uses #3
+    GOSUB GetTableFN
+    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    RETURN
+
+CloseTableISAM:
+    CLOSE #3
+    RETURN
+
+
+REM ==============================================================
+REM  EXEC SQL dispatcher
 REM ==============================================================
 ExecSQL:
     ST$ = TRIM$(SQL_STMT$)
-    IF ST$ = "" THEN SQL_STATUS = 11: SQL_MSG$="EMPTY SQL": RETURN
-
-    REM If txn is active, queue statements
-    REM (except SELECT allowed to run)
-    METAKEY$ = "TXN": GOSUB GetMeta
-    TXNFLAG = VAL(METAVAL$)
+    IF ST$ = "" THEN SQL_STATUS=11: SQL_MSG$="EMPTY SQL": RETURN
 
     UP$ = UCASE$(ST$)
 
-    IF TXNFLAG = 1 THEN
-        IF LEFT$(UP$, 6) <> "SELECT" THEN
-            OPEN TXNFN$ FOR APPEND AS #1
-            PRINT #1, ST$
-            CLOSE #1
-            SQL_MSG$ = "QUEUED (TXN)"
-            RETURN
+    IF OPT{"300"} = "1" THEN
+        OPEN BATFN$ FOR INPUT AS #4
+        IF NOT EOF(4) THEN
+            INPUT #4, L$
+            L$ = TRIM$(L$)
+            IF L$ = "BEGIN" THEN
+                CLOSE #4
+                IF LEFT$(UP$, 6) <> "SELECT" THEN
+                    OPEN BATFN$ FOR APPEND AS #4
+                    PRINT #4, ST$
+                    CLOSE #4
+                    SQL_MSG$ = "QUEUED (TXN)"
+                    RETURN
+                END IF
+            ELSE
+                CLOSE #4
+            END IF
+        ELSE
+            CLOSE #4
         END IF
     END IF
 
-    REM Enforce modes
     IF SQL_MODE$ = "RO" THEN
         IF LEFT$(UP$, 6) <> "SELECT" THEN
-            SQL_STATUS=20: SQL_MSG$="READ-ONLY MODE":
+            SQL_STATUS=20: SQL_MSG$="READ-ONLY MODE"
+            LBL$ = "WARNING": MSG$ = "Write denied in RO mode": GOSUB LogEvent
             RETURN
+        END IF
     END IF
     IF SQL_MODE$ = "AO" THEN
         IF LEFT$(UP$, 6) <> "INSERT" THEN
-            SQL_STATUS=21: SQL_MSG$="APPEND-ONLY MODE":
+            SQL_STATUS=21: SQL_MSG$="APPEND-ONLY MODE"
+            LBL$ = "WARNING": MSG$ = "Non-INSERT denied in AO mode": GOSUB LogEvent
             RETURN
+        END IF
     END IF
 
     IF LEFT$(UP$, 12) = "CREATE TABLE" THEN GOSUB DoCreate: RETURN
@@ -388,6 +286,7 @@ ExecSQL:
     IF LEFT$(UP$, 6) = "UPDATE" THEN GOSUB DoUpdate: RETURN
     IF LEFT$(UP$, 7) = "REPLACE" THEN GOSUB DoReplace: RETURN
     IF LEFT$(UP$, 6) = "DELETE" THEN GOSUB DoDelete: RETURN
+    IF LEFT$(UP$, 4) = "DROP" THEN GOSUB DoDrop: RETURN
 
     SQL_STATUS = 12
     SQL_MSG$ = "UNSUPPORTED SQL"
@@ -407,24 +306,30 @@ DoCreate:
     TBL$ = TRIM$(LEFT$(TMP$, SP-1))
     REST$ = TRIM$(MID$(TMP$, SP+1))
 
+    GOSUB GetSchema
+    IF COLS$ <> "" THEN SQL_STATUS=33: SQL_MSG$="TABLE EXISTS": RETURN
+
     OP = INSTR(REST$, "(")
     CP = INSTR(REST$, ")")
     IF OP = 0 OR CP = 0 OR CP < OP THEN
-        SQL_STATUS=32: SQL_MSG$="BAD COL LIST":
+        SQL_STATUS=32: SQL_MSG$="BAD COL LIST"
         RETURN
+    END IF
     COLS$ = TRIM$(MID$(REST$, OP+1, CP-OP-1))
 
-    PK$ = "KEY"
+    PK$ = "key"
     PPK = INSTR(UCASE$(REST$), "PK")
     IF PPK > 0 THEN
         PK$ = TRIM$(MID$(REST$, PPK+2))
-        IF PK$ = "" THEN PK$ = "KEY"
+        IF PK$ = "" THEN PK$ = "key"
     END IF
 
-    OPEN IDXFN$ FOR APPEND AS #1
-    PRINT #1, "S|"; TBL$; "|"; COLS$; "|"; PK$
-    CLOSE #1
+    GOSUB GetTableFN
+    OPEN TFN$ FOR OUTPUT AS #3
+    CLOSE #3
 
+    GOSUB PutSchema
+    LBL$ = "UPDATED": MSG$ = "TABLE CREATED " + TBL$: GOSUB LogEvent
     SQL_MSG$ = "TABLE CREATED: " + TBL$
     RETURN
 
@@ -447,52 +352,69 @@ DoInsert:
 
     PKPOS = INSTR(UCASE$(REST$), "KEY")
     IF PKPOS = 0 THEN
-        SQL_STATUS=42: SQL_MSG$="INSERT REQUIRES KEY":
-    RETURN
+        SQL_STATUS=42: SQL_MSG$="INSERT REQUIRES KEY"
+        RETURN
+    END IF
     TMP2$ = TRIM$(MID$(REST$, PKPOS+3))
     SP2 = INSTR(TMP2$, " ")
     IF SP2 = 0 THEN
-        SQL_STATUS=43: SQL_MSG$="INSERT REQUIRES VALUES":
-    RETURN
+        SQL_STATUS=43: SQL_MSG$="INSERT REQUIRES VALUES"
+        RETURN
+    END IF
     KEY$ = TRIM$(LEFT$(TMP2$, SP2-1))
     REST2$ = TRIM$(MID$(TMP2$, SP2+1))
 
     VPOS = INSTR(UCASE$(REST2$), "VALUES")
     IF VPOS = 0 THEN
-        SQL_STATUS=44: SQL_MSG$="INSERT REQUIRES VALUES":
-    RETURN
+        SQL_STATUS=44: SQL_MSG$="INSERT REQUIRES VALUES"
+        RETURN
+    END IF
     VSTR$ = TRIM$(MID$(REST2$, VPOS+6))
     OP = INSTR(VSTR$, "("): CP = INSTR(VSTR$, ")")
     IF OP=0 OR CP=0 OR CP<OP THEN
-        SQL_STATUS=45: SQL_MSG$="BAD VALUES":
-    RETURN
+        SQL_STATUS=45: SQL_MSG$="BAD VALUES"
+        RETURN
+    END IF
     VALS$ = TRIM$(MID$(VSTR$, OP+1, CP-OP-1))
-
-    REC$ = "R|" + TBL$ + "|" + KEY$
-    CI = 1
-    WHILE 1
-        GOSUB TokCSVCols
-        IF COL$ = "" THEN EXIT WHILE
-        GOSUB TokCSVVals
-        REC$ = REC$ + "|" + COL$ + "=" + VV$
-        CI = CI + 1
-    WEND
 
     GOSUB AppendRecord
     SQL_MSG$ = "INSERTED " + TBL$ + " KEY " + KEY$
     RETURN
 
-TokCSVCols:
-    COL$ = GetCSVToken$(COLS$, CI)
-    RETURN
-TokCSVVals:
-    VV$ = GetCSVToken$(VALS$, CI)
+
+REM ==============================================================
+REM  Append a record using ISAM PUT
+REM  IN: TBL$, COLS$, KEY$, VALS$
+REM ==============================================================
+AppendRecord:
+    STEMP$ = TBL$
+    KTEMP$ = KEY$
+    CTEMP$ = COLS$
+    VTEMP$ = VALS$
+    DIM R{}
+    R{"key"} = KTEMP$
+    CI = 1
+    WHILE 1
+        S$ = CTEMP$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        COL$ = GETD$
+        IF COL$ = "" THEN EXIT WHILE
+        S$ = VTEMP$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        VV$ = GETD$
+        R{COL$} = VV$
+        CI = CI + 1
+    WEND
+
+    TFN$ = DBPFX$ + "." + STEMP$ + ".idx"
+    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    PUT #3, R{}
+    CLOSE #3
+    LBL$ = "APPENDED": MSG$ = "INSERT " + STEMP$ + " KEY " + KTEMP$: GOSUB LogEvent
     RETURN
 
 
 REM ==============================================================
-REM  SELECT * FROM t [WHERE KEY=val | WHERE col=val] [LIMIT n]
-REM  Returns only latest versions (using idx table map)
+REM  SELECT * FROM t [WHERE KEY=val | WHERE col=val]
+REM                  [ORDER BY col [ASC|DESC]] [LIMIT n]
 REM ==============================================================
 DoSelect:
     SQL_RESULT$ = ""
@@ -515,95 +437,163 @@ DoSelect:
     IF COLS$ = "" THEN SQL_STATUS=51: SQL_MSG$="NO SUCH TABLE": RETURN
 
     WCOL$ = "": WVAL$ = "": WHEREKEY = 0
+    OCOL$ = "": ODIR$ = ""
 
     PW = INSTR(UCASE$(REST$), "WHERE")
-    IF PW > 0 THEN
-        W$ = TRIM$(MID$(REST$, PW+5))
-        PL = INSTR(UCASE$(W$), "LIMIT")
-        IF PL > 0 THEN
-            LIMIT = VAL(TRIM$(MID$(W$, PL+5)))
-            W$ = TRIM$(LEFT$(W$, PL-1))
-        END IF
+    PO = INSTR(UCASE$(REST$), "ORDER BY")
+    PL = INSTR(UCASE$(REST$), "LIMIT")
 
-        EQ = INSTR(W$, "=")
+    IF PW > 0 THEN
+        WEND$ = LEN(REST$) + 1
+        IF PO > 0 AND PO > PW THEN WEND$ = PO
+        IF PL > 0 AND PL > PW AND PL < WEND$ THEN WEND$ = PL
+        WCLAUSE$ = TRIM$(MID$(REST$, PW+5, WEND$-PW-5))
+
+        EQ = INSTR(WCLAUSE$, "=")
         IF EQ = 0 THEN SQL_STATUS=52: SQL_MSG$="BAD WHERE": RETURN
-        WCOL$ = TRIM$(LEFT$(W$, EQ-1))
-        WVAL$ = TRIM$(MID$(W$, EQ+1))
-        IF UCASE$(WCOL$) = "KEY" THEN WHEREKEY = 1
-    ELSE
-        PL2 = INSTR(UCASE$(REST$), "LIMIT")
-        IF PL2 > 0 THEN LIMIT = VAL(TRIM$(MID$(REST$, PL2+5)))
+        WCOL$ = TRIM$(LEFT$(WCLAUSE$, EQ-1))
+        WVAL$ = TRIM$(MID$(WCLAUSE$, EQ+1))
+        IF UCASE$(WCOL$) = "KEY" OR UCASE$(WCOL$) = UCASE$(PK$) THEN WHEREKEY = 1
     END IF
 
-    REM Load index for this table once (fast lookups)
-    GOSUB LoadIndexForTable
+    IF PO > 0 THEN
+        OEND$ = LEN(REST$) + 1
+        IF PL > 0 AND PL > PO THEN OEND$ = PL
+        OCLAUSE$ = TRIM$(MID$(REST$, PO+9, OEND$-PO-9))
+        OSP = INSTR(OCLAUSE$, " ")
+        IF OSP = 0 THEN
+            OCOL$ = OCLAUSE$
+            ODIR$ = "ASC"
+        ELSE
+            OCOL$ = TRIM$(LEFT$(OCLAUSE$, OSP-1))
+            ODIR$ = TRIM$(MID$(OCLAUSE$, OSP+1))
+            ODIR$ = UCASE$(ODIR$)
+            IF ODIR$ <> "DESC" THEN ODIR$ = "ASC"
+        END IF
+    END IF
+
+    IF PL > 0 THEN
+        LIMIT = VAL(TRIM$(MID$(REST$, PL+5)))
+        IF LIMIT < 0 THEN LIMIT = 0
+    END IF
+
+    STBL$ = TBL$
+    SCOLS$ = COLS$
+    SPK$ = PK$
 
     IF WHEREKEY = 1 THEN
-        POS$ = IDX{WVAL$}
-        IF POS$ = "" THEN SQL_MSG$="0 ROWS": RETURN
-        C = INSTR(POS$, ",")
-        FNO = VAL(LEFT$(POS$, C-1))
-        RNO = VAL(MID$(POS$, C+1))
-        IF FNO = 0 THEN SQL_MSG$="0 ROWS": RETURN
-        GOSUB FetchByPos
-        IF OUT$ <> "" THEN SQL_RESULT$ = OUT$ + CHR$(10)
+        TFN$ = DBPFX$ + "." + STBL$ + ".idx"
+        OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+        DIM R{}
+        GET #3, R{}, KEY = WVAL$
+        IF FOUND(3) THEN
+            GOSUB BuildRowFromRec
+            SQL_RESULT$ = FMT$ + CHR$(10)
+        END IF
+        CLOSE #3
         SQL_MSG$ = "OK"
         RETURN
     END IF
 
-    METAKEY$ = "CUR": GOSUB GetMeta
-    CURFILE = VAL(METAVAL$)
-    IF CURFILE <= 0 THEN CURFILE = 1
+    TFN$ = DBPFX$ + "." + STBL$ + ".idx"
+    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    DIM R{}
+    RESET #3
 
+    HASSORT = 0
+    IF OCOL$ <> "" THEN HASSORT = 1
+    MAXROW = 500
+    DIM RSLT$(MAXROW)
+    RCNT = 0
     ROWS = 0
-    FOR FN = 1 TO CURFILE
-        GOSUB MakeDBName
-        OPEN DBFN$ FOR INPUT AS #1
-        RN = 0
-        WHILE NOT EOF(1)
-            INPUT #1, L$
-            RN = RN + 1
-            IF (RN MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
 
-            IF INSTR(L$, "R|" + TBL$ + "|") <> 1 THEN GOTO NextRow
+    WHILE NOT EOF(3)
+        GET #3, R{}, NEXT
+        IF NOT FOUND(3) THEN GOTO SNX2
+        IF WCOL$ <> "" AND R{WCOL$} <> WVAL$ THEN GOTO SNX2
 
-            REM parse KEY quickly: R|table|key|
-            REST$ = MID$(L$, LEN("R|" + TBL$ + "|") + 1)
-            P1 = INSTR(REST$, "|")
-            IF P1 = 0 THEN GOTO NextRow
-            KEY$ = LEFT$(REST$, P1-1)
+        GOSUB BuildRowFromRec
 
-            POS$ = IDX{KEY$}
-            IF POS$ = "" THEN GOTO NextRow
+        IF HASSORT = 1 AND RCNT < MAXROW THEN
+            RSLT$(RCNT) = FMT$
+            RCNT = RCNT + 1
+        ELSE
+            SQL_RESULT$ = SQL_RESULT$ + FMT$ + CHR$(10)
+        END IF
+        ROWS = ROWS + 1
+        IF LIMIT > 0 AND ROWS >= LIMIT THEN EXIT WHILE
+SNX2:
+        IF (ROWS MOD 50) = 0 THEN X = SLEEP(0.25)
+    WEND
+    CLOSE #3
 
-            C = INSTR(POS$, ",")
-            PFN = VAL(LEFT$(POS$, C-1))
-            PRN = VAL(MID$(POS$, C+1))
-            IF PFN = 0 THEN GOTO NextRow
-            IF PFN <> FN OR PRN <> RN THEN GOTO NextRow
+    IF HASSORT = 1 AND RCNT > 1 THEN
+        GOSUB SortResultRows
+    END IF
 
-            IF WCOL$ <> "" THEN
-                NEED$ = "|" + WCOL$ + "=" + WVAL$
-                IF INSTR(L$, NEED$) = 0 THEN GOTO NextRow
-            END IF
-
-            SQL_RESULT$ = SQL_RESULT$ + L$ + CHR$(10)
-            ROWS = ROWS + 1
-            IF LIMIT > 0 AND ROWS >= LIMIT THEN
-                CLOSE #1: SQL_MSG$="OK":
-            RETURN
-
-NextRow:
-        WEND
-        CLOSE #1
-    NEXT FN
+    IF HASSORT = 1 THEN
+        FOR SI = 0 TO RCNT - 1
+            SQL_RESULT$ = SQL_RESULT$ + RSLT$(SI) + CHR$(10)
+        NEXT SI
+    END IF
 
     SQL_MSG$ = "OK"
     RETURN
 
+REM  Build a result row from the current R{}
+REM  IN: R{}, SPK$, SCOLS$  OUT: FMT$
+BuildRowFromRec:
+    FMT$ = "R|" + SPK$ + "|" + R{SPK$}
+    CI = 1
+    WHILE 1
+        S$ = SCOLS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        C$ = GETD$
+        IF C$ = "" THEN EXIT WHILE
+        FMT$ = FMT$ + "|" + C$ + "=" + R{C$}
+        CI = CI + 1
+    WEND
+    RETURN
+
+REM  Sort RSLT$ array by OCOL$ in ODIR$ order
+SortResultRows:
+    FOR SI = 0 TO RCNT - 2
+        FOR SJ = SI + 1 TO RCNT - 1
+            NEED$ = "|" + OCOL$ + "="
+            PI = INSTR(RSLT$(SI), NEED$)
+            PJ = INSTR(RSLT$(SJ), NEED$)
+            VI$ = ""
+            VJ$ = ""
+            IF PI > 0 THEN
+                VI$ = MID$(RSLT$(SI), PI + LEN(NEED$))
+                NXI = INSTR(VI$, "|")
+                IF NXI > 0 THEN VI$ = LEFT$(VI$, NXI-1)
+            END IF
+            IF PJ > 0 THEN
+                VJ$ = MID$(RSLT$(SJ), PJ + LEN(NEED$))
+                NXJ = INSTR(VJ$, "|")
+                IF NXJ > 0 THEN VJ$ = LEFT$(VJ$, NXJ-1)
+            END IF
+
+            SWAP = 0
+            IF ODIR$ = "ASC" THEN
+                IF VI$ > VJ$ THEN SWAP = 1
+            ELSE
+                IF VI$ < VJ$ THEN SWAP = 1
+            END IF
+
+            IF SWAP = 1 THEN
+                TMP$ = RSLT$(SI)
+                RSLT$(SI) = RSLT$(SJ)
+                RSLT$(SJ) = TMP$
+            END IF
+        NEXT SJ
+        IF (SI MOD 50) = 0 THEN X = SLEEP(0.25)
+    NEXT SI
+    RETURN
+
 
 REM ==============================================================
-REM  UPDATE t KEY k SET col=val   (append new version)
+REM  UPDATE t KEY k SET col=val
 REM ==============================================================
 DoUpdate:
     TMP$ = TRIM$(MID$(ST$, 7))
@@ -614,64 +604,48 @@ DoUpdate:
 
     GOSUB GetSchema
     IF COLS$ = "" THEN
-        SQL_STATUS=61: SQL_MSG$="NO SUCH TABLE":
+        SQL_STATUS=61: SQL_MSG$="NO SUCH TABLE"
         RETURN
+    END IF
 
     PKPOS = INSTR(UCASE$(REST$), "KEY")
     IF PKPOS = 0 THEN
-        SQL_STATUS=62: SQL_MSG$="UPDATE REQUIRES KEY":
+        SQL_STATUS=62: SQL_MSG$="UPDATE REQUIRES KEY"
         RETURN
+    END IF
     TMP2$ = TRIM$(MID$(REST$, PKPOS+3))
     SP2 = INSTR(TMP2$, " ")
     IF SP2 = 0 THEN
-        SQL_STATUS=63: SQL_MSG$="UPDATE REQUIRES SET":
+        SQL_STATUS=63: SQL_MSG$="UPDATE REQUIRES SET"
         RETURN
+    END IF
     KEY$ = TRIM$(LEFT$(TMP2$, SP2-1))
     REST2$ = TRIM$(MID$(TMP2$, SP2+1))
 
     SPOS = INSTR(UCASE$(REST2$), "SET")
     IF SPOS = 0 THEN
-        SQL_STATUS=64: SQL_MSG$="UPDATE REQUIRES SET":
+        SQL_STATUS=64: SQL_MSG$="UPDATE REQUIRES SET"
         RETURN
+    END IF
     SET$ = TRIM$(MID$(REST2$, SPOS+3))
     EQ = INSTR(SET$, "=")
     IF EQ = 0 THEN SQL_STATUS=65: SQL_MSG$="BAD SET": RETURN
     UCOL$ = TRIM$(LEFT$(SET$, EQ-1))
     UVAL$ = TRIM$(MID$(SET$, EQ+1))
 
-    REM Load idx for table and fetch current record if present
-    GOSUB LoadIndexForTable
-    POS$ = IDX{KEY$}
-    CUR$ = ""
-    IF POS$ <> "" THEN
-        C = INSTR(POS$, ",")
-        FNO = VAL(LEFT$(POS$, C-1))
-        RNO = VAL(MID$(POS$, C+1))
-        IF FNO <> 0 THEN
-            GOSUB FetchByPos
-            CUR$ = OUT$
-        END IF
-    END IF
-
-    IF CUR$ = "" THEN CUR$ = "R|" + TBL$ + "|" + KEY$
-
-    REM replace/add field
-    NEED$ = "|" + UCOL$ + "="
-    P = INSTR(CUR$, NEED$)
-    IF P = 0 THEN
-        REC$ = CUR$ + "|" + UCOL$ + "=" + UVAL$
+    TFN$ = DBPFX$ + "." + TBL$ + ".idx"
+    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    DIM R{}
+    GET #3, R{}, KEY = KEY$
+    IF FOUND(3) THEN
+        R{UCOL$} = UVAL$
+        PUT #3, R{}
+        LBL$ = "UPDATED": MSG$ = "UPDATE " + TBL$ + " KEY " + KEY$ + " " + UCOL$ + "=" + UVAL$
+        GOSUB LogEvent
     ELSE
-        PVAL = P + LEN(NEED$)
-        RESTX$ = MID$(CUR$, PVAL)
-        NXT = INSTR(RESTX$, "|")
-        IF NXT = 0 THEN
-            REC$ = LEFT$(CUR$, PVAL-1) + UVAL$
-        ELSE
-            REC$ = LEFT$(CUR$, PVAL-1) + UVAL$ + MID$(RESTX$, NXT)
-        END IF
+        SQL_STATUS=66: SQL_MSG$="KEY NOT FOUND"
     END IF
-
-    GOSUB AppendRecord
+    CLOSE #3
     SQL_MSG$ = "UPDATED " + TBL$ + " KEY " + KEY$
     RETURN
 
@@ -688,19 +662,19 @@ DoReplace:
 
     GOSUB GetSchema
     IF COLS$ = "" THEN
-        SQL_STATUS=71: SQL_MSG$="NO SUCH TABLE":
+        SQL_STATUS=71: SQL_MSG$="NO SUCH TABLE"
         RETURN
     END IF
 
     PKPOS = INSTR(UCASE$(REST$), "KEY")
     IF PKPOS = 0 THEN
-        SQL_STATUS=72: SQL_MSG$="REPLACE REQUIRES KEY":
+        SQL_STATUS=72: SQL_MSG$="REPLACE REQUIRES KEY"
         RETURN
     END IF
     TMP2$ = TRIM$(MID$(REST$, PKPOS+3))
     SP2 = INSTR(TMP2$, " ")
     IF SP2 = 0 THEN
-        SQL_STATUS=73: SQL_MSG$="REPLACE REQUIRES VALUES":
+        SQL_STATUS=73: SQL_MSG$="REPLACE REQUIRES VALUES"
         RETURN
     END IF
     KEY$ = TRIM$(LEFT$(TMP2$, SP2-1))
@@ -708,34 +682,41 @@ DoReplace:
 
     VPOS = INSTR(UCASE$(REST2$), "VALUES")
     IF VPOS = 0 THEN
-        SQL_STATUS=74: SQL_MSG$="REPLACE REQUIRES VALUES":
+        SQL_STATUS=74: SQL_MSG$="REPLACE REQUIRES VALUES"
         RETURN
     END IF
     VSTR$ = TRIM$(MID$(REST2$, VPOS+6))
     OP = INSTR(VSTR$, "("): CP = INSTR(VSTR$, ")")
     IF OP=0 OR CP=0 OR CP<OP THEN
-        SQL_STATUS=75: SQL_MSG$="BAD VALUES":
+        SQL_STATUS=75: SQL_MSG$="BAD VALUES"
         RETURN
     END IF
     VALS$ = TRIM$(MID$(VSTR$, OP+1, CP-OP-1))
 
-    REC$ = "R|" + TBL$ + "|" + KEY$
+    DIM R{}
+    R{"key"} = KEY$
     CI = 1
     WHILE 1
-        COL$ = GetCSVToken$(COLS$, CI)
+        S$ = COLS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        COL$ = GETD$
         IF COL$ = "" THEN EXIT WHILE
-        VV$  = GetCSVToken$(VALS$, CI)
-        REC$ = REC$ + "|" + COL$ + "=" + VV$
+        S$ = VALS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        VV$ = GETD$
+        R{COL$} = VV$
         CI = CI + 1
     WEND
 
-    GOSUB AppendRecord
+    TFN$ = DBPFX$ + "." + TBL$ + ".idx"
+    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    PUT #3, R{}
+    CLOSE #3
+    LBL$ = "UPDATED": MSG$ = "REPLACE " + TBL$ + " KEY " + KEY$: GOSUB LogEvent
     SQL_MSG$ = "REPLACED " + TBL$ + " KEY " + KEY$
     RETURN
 
 
 REM ==============================================================
-REM  DELETE FROM t KEY k  (tombstone in idx)
+REM  DELETE FROM t KEY k
 REM ==============================================================
 DoDelete:
     PF = INSTR(UP$, "FROM")
@@ -748,416 +729,206 @@ DoDelete:
 
     PKPOS = INSTR(UCASE$(REST$), "KEY")
     IF PKPOS = 0 THEN
-        SQL_STATUS=82: SQL_MSG$="DELETE REQUIRES KEY":
+        SQL_STATUS=82: SQL_MSG$="DELETE REQUIRES KEY"
         RETURN
     END IF
     KEY$ = TRIM$(MID$(REST$, PKPOS+3))
 
-    OPEN IDXFN$ FOR APPEND AS #1
-    PRINT #1, "I|"; TBL$; "|"; KEY$; "|0|0"
-    CLOSE #1
-
+    TFN$ = DBPFX$ + "." + TBL$ + ".idx"
+    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    DELETE #3, KEY = KEY$
+    CLOSE #3
+    LBL$ = "DELETED": MSG$ = "DELETE " + TBL$ + " KEY " + KEY$: GOSUB LogEvent
     SQL_MSG$ = "DELETED " + TBL$ + " KEY " + KEY$
     RETURN
 
 
 REM ==============================================================
-REM  SEARCH: SQL_STMT$ = "table|term|col(optional)"
-REM  Scans latest versions only (using idx map)
+REM  DROP TABLE t
+REM ==============================================================
+DoDrop:
+    TMP$ = TRIM$(MID$(ST$, 5))
+    IF TMP$ = "" THEN SQL_STATUS=85: SQL_MSG$="BAD DROP": RETURN
+    TBL$ = TMP$
+
+    GOSUB GetSchema
+    IF COLS$ = "" THEN
+        SQL_STATUS=86: SQL_MSG$="NO SUCH TABLE"
+        RETURN
+    END IF
+
+    GOSUB GetTableFN
+    OPEN TFN$ FOR OUTPUT AS #3
+    CLOSE #3
+
+    GOSUB DelSchema
+    LBL$ = "DELETED": MSG$ = "DROP TABLE " + TBL$: GOSUB LogEvent
+    SQL_MSG$ = "DROPPED TABLE " + TBL$
+    RETURN
+
+
+REM ==============================================================
+REM  SEARCH: SQL_STMT$ = "table|term|col(optional)|mode(optional)"
+REM  modes: CONTAINS (default), EXACT, PREFIX, SUFFIX
 REM ==============================================================
 SearchCmd:
     SQL_RESULT$ = ""
 
-    TBL$ = GetPipeToken$(SQL_STMT$, 1)
-    TERM$ = GetPipeToken$(SQL_STMT$, 2)
-    COLF$ = GetPipeToken$(SQL_STMT$, 3)
+    S$ = SQL_STMT$: D$ = "|": N = 1: GOSUB GetDelimToken$
+    TBL$ = GETD$
+    S$ = SQL_STMT$: D$ = "|": N = 2: GOSUB GetDelimToken$
+    TERM$ = GETD$
+    S$ = SQL_STMT$: D$ = "|": N = 3: GOSUB GetDelimToken$
+    COLF$ = GETD$
+    S$ = SQL_STMT$: D$ = "|": N = 4: GOSUB GetDelimToken$
+    SMODE$ = UCASE$(GETD$)
 
     IF TBL$ = "" OR TERM$ = "" THEN
-        SQL_STATUS=90: SQL_MSG$="SEARCH NEEDS table|term":
+        SQL_STATUS=90: SQL_MSG$="SEARCH NEEDS table|term"
         RETURN
     END IF
+    IF SMODE$ = "" THEN SMODE$ = "CONTAINS"
 
     GOSUB GetSchema
     IF COLS$ = "" THEN SQL_STATUS=91: SQL_MSG$="NO SUCH TABLE": RETURN
 
-    GOSUB LoadIndexForTable
+    STBL$ = TBL$
+    SCOLS$ = COLS$
+    SPK$ = PK$
+    STERM$ = UCASE$(TERM$)
 
-    METAKEY$ = "CUR": GOSUB GetMeta
-    CURFILE = VAL(METAVAL$)
-    IF CURFILE <= 0 THEN CURFILE = 1
-
-    ROWS = 0
-    FOR FN = 1 TO CURFILE
-        GOSUB MakeDBName
-        OPEN DBFN$ FOR INPUT AS #1
-        RN = 0
-        WHILE NOT EOF(1)
-            INPUT #1, L$
-            RN = RN + 1
-            IF (RN MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-
-            IF INSTR(L$, "R|" + TBL$ + "|") <> 1 THEN GOTO SNext
-
-            REST$ = MID$(L$, LEN("R|" + TBL$ + "|") + 1)
-            P1 = INSTR(REST$, "|")
-            IF P1 = 0 THEN GOTO SNext
-            KEY$ = LEFT$(REST$, P1-1)
-
-            POS$ = IDX{KEY$}
-            IF POS$ = "" THEN GOTO SNext
-            C = INSTR(POS$, ",")
-            PFN = VAL(LEFT$(POS$, C-1))
-            PRN = VAL(MID$(POS$, C+1))
-            IF PFN = 0 THEN GOTO SNext
-            IF PFN <> FN OR PRN <> RN THEN GOTO SNext
-
-            IF COLF$ = "" THEN
-                IF INSTR(UCASE$(L$), UCASE$(TERM$)) > 0 THEN
-                    SQL_RESULT$ = SQL_RESULT$ + L$ + CHR$(10)
-                END IF
-            ELSE
-                NEED$ = "|" + COLF$ + "="
-                IF INSTR(UCASE$(L$), UCASE$(NEED$ + TERM$)) > 0 THEN
-                    SQL_RESULT$ = SQL_RESULT$ + L$ + CHR$(10)
-                END IF
-            END IF
-SNext:
-        WEND
-        CLOSE #1
-    NEXT FN
-
+    TFN$ = DBPFX$ + "." + STBL$ + ".idx"
+    OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
+    DIM R{}
+    RESET #3
+    RC = 0
+    WHILE NOT EOF(3)
+        GET #3, R{}, NEXT
+        IF NOT FOUND(3) THEN GOTO SCNX3
+        IF COLF$ = "" THEN
+            FOUND$ = "0"
+            CI = 1
+            WHILE 1
+                S$ = SCOLS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+                C$ = GETD$
+                IF C$ = "" THEN EXIT WHILE
+                GOSUB MatchField
+                IF MATCH = 1 THEN FOUND$ = "1"
+                CI = CI + 1
+            WEND
+            IF FOUND$ = "1" THEN GOSUB BuildResultRow
+        ELSE
+            C$ = COLF$
+            GOSUB MatchField
+            IF MATCH = 1 THEN GOSUB BuildResultRow
+        END IF
+SCNX3:
+        IF (RC MOD 50) = 0 THEN X = SLEEP(0.25)
+    WEND
+    CLOSE #3
     SQL_MSG$ = "OK"
+    RETURN
+
+REM  Match a field value against the search term
+REM  IN: C$, R{}, STERM$, SMODE$  OUT: MATCH
+MatchField:
+    MATCH = 0
+    FV$ = UCASE$(R{C$})
+    IF SMODE$ = "EXACT" THEN
+        IF FV$ = STERM$ THEN MATCH = 1
+    ELSEIF SMODE$ = "PREFIX" THEN
+        IF LEFT$(FV$, LEN(STERM$)) = STERM$ THEN MATCH = 1
+    ELSEIF SMODE$ = "SUFFIX" THEN
+        IF LEN(FV$) >= LEN(STERM$) THEN
+            IF RIGHT$(FV$, LEN(STERM$)) = STERM$ THEN MATCH = 1
+        END IF
+    ELSE
+        IF INSTR(FV$, STERM$) > 0 THEN MATCH = 1
+    END IF
+    RETURN
+
+REM  Build result row for SEARCH (uses R{}, SPK$, SCOLS$)
+BuildResultRow:
+    FMT$ = "R|" + SPK$ + "|" + R{SPK$}
+    CI = 1
+    WHILE 1
+        S$ = SCOLS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        C$ = GETD$
+        IF C$ = "" THEN EXIT WHILE
+        FMT$ = FMT$ + "|" + C$ + "=" + R{C$}
+        CI = CI + 1
+    WEND
+    SQL_RESULT$ = SQL_RESULT$ + FMT$ + CHR$(10)
+    RC = RC + 1
     RETURN
 
 
 REM ==============================================================
-REM  TRANSACTIONS
+REM  TRANSACTIONS using batch.dat
 REM ==============================================================
 TxnBegin:
-    OPEN TXNFN$ FOR OUTPUT AS #1
-    CLOSE #1
-    OPEN IDXFN$ FOR APPEND AS #1
-    PRINT #1, "M|TXN|1"
-    CLOSE #1
+    OPEN BATFN$ FOR OUTPUT AS #4
+    PRINT #4, "BEGIN"
+    CLOSE #4
+    LBL$ = "OPEN": MSG$ = "Transaction started": GOSUB LogEvent
     SQL_MSG$ = "TXN BEGIN"
     RETURN
 
 TxnRollback:
-    OPEN TXNFN$ FOR OUTPUT AS #1
-    CLOSE #1
-    OPEN IDXFN$ FOR APPEND AS #1
-    PRINT #1, "M|TXN|0"
-    CLOSE #1
+    OPEN BATFN$ FOR OUTPUT AS #4
+    CLOSE #4
+    LBL$ = "CLOSED": MSG$ = "Transaction rolled back": GOSUB LogEvent
     SQL_MSG$ = "TXN ROLLBACK"
     RETURN
 
 TxnCommit:
-    METAKEY$ = "TXN": GOSUB GetMeta
-    IF VAL(METAVAL$) <> 1 THEN SQL_MSG$="NO TXN": RETURN
+    OPEN BATFN$ FOR INPUT AS #4
+    IF EOF(4) THEN CLOSE #4: SQL_MSG$="NO TXN": RETURN
+    INPUT #4, L$
+    L$ = TRIM$(L$)
+    IF L$ <> "BEGIN" THEN CLOSE #4: SQL_MSG$="NO TXN": RETURN
 
-    OPEN TXNFN$ FOR INPUT AS #1
     N = 0
-    WHILE NOT EOF(1)
-        INPUT #1, L$
+    OLD$ = SQL_STMT$
+    OLDM$ = SQL_MODE$
+    SQL_MODE$ = "RW"
+    WHILE NOT EOF(4)
+        INPUT #4, L$
         L$ = TRIM$(L$)
         IF L$ <> "" THEN
             N = N + 1
-            OLD$ = SQL_STMT$
-            OLDM$ = SQL_MODE$
-            SQL_MODE$ = "RW"
             SQL_STMT$ = L$
             GOSUB ExecSQL
-            SQL_STMT$ = OLD$
-            SQL_MODE$ = OLDM$
+            IF SQL_STATUS <> 0 THEN
+                CLOSE #4
+                OPEN BATFN$ FOR OUTPUT AS #4
+                CLOSE #4
+                SQL_STMT$ = OLD$
+                SQL_MODE$ = OLDM$
+                SQL_MSG$ = "TXN ABORTED AT STMT " + STR$(N) + ": " + SQL_MSG$
+                LBL$ = "ERROR"
+                MSG$ = "Transaction aborted at stmt " + STR$(N)
+                GOSUB LogEvent
+                RETURN
+            END IF
         END IF
-        IF (N MOD 20) = 0 THEN X = SLEEP(YIELDSEC)
     WEND
-    CLOSE #1
+    CLOSE #4
 
-    OPEN TXNFN$ FOR OUTPUT AS #1
-    CLOSE #1
-    OPEN IDXFN$ FOR APPEND AS #1
-    PRINT #1, "M|TXN|0"
-    CLOSE #1
-
+    OPEN BATFN$ FOR OUTPUT AS #4
+    CLOSE #4
+    SQL_STMT$ = OLD$
+    SQL_MODE$ = OLDM$
+    LBL$ = "CLOSED": MSG$ = "Transaction committed (" + STR$(N) + " stmts)"
+    GOSUB LogEvent
     SQL_MSG$ = "TXN COMMIT (" + STR$(N) + " stmts)"
     RETURN
 
 
 REM ==============================================================
-REM  COMPACT: rewrite idx with latest-wins (schemas/meta/index/F/R)
+REM  Token helper (uses S$, D$, N as input, returns GETD$)
 REM ==============================================================
-CompactIdx:
-    DIM SC{}
-    DIM IX{}
-    DIM FB{}
-    DIM RC{}
-    DIM META{}
-
-    REM Pass 1: scan idx, keep latest values in maps
-    OPEN IDXFN$ FOR INPUT AS #1
-    N = 0
-    WHILE NOT EOF(1)
-        INPUT #1, L$
-        N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-        L$ = TRIM$(L$)
-
-        IF INSTR(L$, "S|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            T$ = GetPipeToken$(REST$, 1)
-            C$ = GetPipeToken$(REST$, 2)
-            P$ = GetPipeToken$(REST$, 3)
-            SC{T$} = C$ + "|" + P$
-        END IF
-
-        IF INSTR(L$, "I|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            T$ = GetPipeToken$(REST$, 1)
-            K$ = GetPipeToken$(REST$, 2)
-            F$ = GetPipeToken$(REST$, 3)
-            R$ = GetPipeToken$(REST$, 4)
-            IX{T$ + "|" + K$} = F$ + "|" + R$
-        END IF
-
-        IF INSTR(L$, "F|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            FN$ = GetPipeToken$(REST$, 1)
-            B$  = GetPipeToken$(REST$, 2)
-            FB{FN$} = B$
-        END IF
-
-        IF INSTR(L$, "R|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            FN$ = GetPipeToken$(REST$, 1)
-            C$  = GetPipeToken$(REST$, 2)
-            RC{FN$} = C$
-        END IF
-
-        IF INSTR(L$, "M|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            K$ = GetPipeToken$(REST$, 1)
-            V$ = GetPipeToken$(REST$, 2)
-            META{K$} = V$
-        END IF
-    WEND
-    CLOSE #1
-
-    TMPFN$ = DBPFX$ + "-idxnew.dat"
-    OPEN TMPFN$ FOR OUTPUT AS #1
-
-    REM Write meta
-    IF META{"CUR"} <> "" THEN PRINT #1, "M|CUR|"; META{"CUR"}
-    IF META{"TXN"} <> "" THEN PRINT #1, "M|TXN|"; META{"TXN"}
-
-    REM Write schemas
-    REM We don't have a built-in iterator spec here,
-    REM so we re-scan the old idx
-    REM and output only when it matches the final map value (dedupe).
-    OPEN IDXFN$ FOR INPUT AS #2
-    N = 0
-    WHILE NOT EOF(2)
-        INPUT #2, L$
-        N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-        L$ = TRIM$(L$)
-
-        IF INSTR(L$, "S|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            T$ = GetPipeToken$(REST$, 1)
-            C$ = GetPipeToken$(REST$, 2)
-            P$ = GetPipeToken$(REST$, 3)
-            IF SC{T$} = (C$ + "|" + P$) THEN
-                PRINT #1, "S|"; T$; "|"; C$; "|"; P$
-                SC{T$} = ""   REM mark written
-            END IF
-        END IF
-    WEND
-    CLOSE #2
-
-    REM Write F/R and I similarly by rescanning
-    REM and matching final maps
-    OPEN IDXFN$ FOR INPUT AS #2
-    N = 0
-    WHILE NOT EOF(2)
-        INPUT #2, L$
-        N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-        L$ = TRIM$(L$)
-
-        IF INSTR(L$, "F|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            FN$ = GetPipeToken$(REST$, 1)
-            B$  = GetPipeToken$(REST$, 2)
-            IF FB{FN$} = B$ THEN
-                PRINT #1, "F|"; FN$; "|"; B$
-                FB{FN$} = ""
-            END IF
-        END IF
-
-        IF INSTR(L$, "R|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            FN$ = GetPipeToken$(REST$, 1)
-            C$  = GetPipeToken$(REST$, 2)
-            IF RC{FN$} = C$ THEN
-                PRINT #1, "R|"; FN$; "|"; C$
-                RC{FN$} = ""
-            END IF
-        END IF
-
-        IF INSTR(L$, "I|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            T$ = GetPipeToken$(REST$, 1)
-            K$ = GetPipeToken$(REST$, 2)
-            F$ = GetPipeToken$(REST$, 3)
-            R$ = GetPipeToken$(REST$, 4)
-            IF IX{T$ + "|" + K$} = (F$ + "|" + R$) THEN
-                PRINT #1, "I|"; T$; "|"; K$; "|"; F$; "|"; R$
-                IX{T$ + "|" + K$} = ""
-            END IF
-        END IF
-    WEND
-    CLOSE #2
-
-    CLOSE #1
-
-    REM Copy tmp over real idx
-    OPEN TMPFN$ FOR INPUT AS #1
-    OPEN IDXFN$ FOR OUTPUT AS #2
-    WHILE NOT EOF(1)
-        INPUT #1, L$
-        PRINT #2, L$
-    WEND
-    CLOSE #1
-    CLOSE #2
-
-    REM Clear tmp
-    OPEN TMPFN$ FOR OUTPUT AS #1
-    CLOSE #1
-
-    SQL_MSG$ = "COMPACT OK"
-    RETURN
-
-
-REM ==============================================================
-REM  REINDEX: rebuild idx by scanning db files (keeps schemas),
-REM          writes fresh M/F/R/I, then COMPACT for cleanliness
-REM ==============================================================
-ReindexAll:
-    REM Keep latest schemas from existing idx
-    DIM SC{}
-    OPEN IDXFN$ FOR INPUT AS #1
-    N = 0
-    WHILE NOT EOF(1)
-        INPUT #1, L$
-        N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-        L$ = TRIM$(L$)
-        IF INSTR(L$, "S|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            T$ = GetPipeToken$(REST$, 1)
-            C$ = GetPipeToken$(REST$, 2)
-            P$ = GetPipeToken$(REST$, 3)
-            SC{T$} = C$ + "|" + P$
-        END IF
-    WEND
-    CLOSE #1
-
-    METAKEY$ = "CUR": GOSUB GetMeta
-    CURFILE = VAL(METAVAL$)
-    IF CURFILE <= 0 THEN CURFILE = 1
-
-    TMPFN$ = DBPFX$ + "-idxnew.dat"
-    OPEN TMPFN$ FOR OUTPUT AS #1
-
-    PRINT #1, "M|CUR|"; CURFILE
-    PRINT #1, "M|TXN|0"
-
-    REM Write schemas by rescanning old idx
-    REM and matching SC map (dedupe)
-    OPEN IDXFN$ FOR INPUT AS #2
-    N = 0
-    WHILE NOT EOF(2)
-        INPUT #2, L$
-        N = N + 1
-        IF (N MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-        L$ = TRIM$(L$)
-        IF INSTR(L$, "S|") = 1 THEN
-            REST$ = MID$(L$, 3)
-            T$ = GetPipeToken$(REST$, 1)
-            C$ = GetPipeToken$(REST$, 2)
-            P$ = GetPipeToken$(REST$, 3)
-            IF SC{T$} = (C$ + "|" + P$) THEN
-                PRINT #1, "S|"; T$; "|"; C$; "|"; P$
-                SC{T$} = ""
-            END IF
-        END IF
-    WEND
-    CLOSE #2
-
-    REM Scan each db file and emit I entries + F/R
-    FOR FN = 1 TO CURFILE
-        BYTES = 0
-        RECNO = 0
-        GOSUB MakeDBName
-        OPEN DBFN$ FOR INPUT AS #2
-        WHILE NOT EOF(2)
-            INPUT #2, L$
-            RECNO = RECNO + 1
-            IF (RECNO MOD 50) = 0 THEN X = SLEEP(YIELDSEC)
-            BYTES = BYTES + LEN(L$) + 2
-            IF INSTR(L$, "R|") <> 1 THEN GOTO RNext
-
-            REST$ = MID$(L$, 3)
-            T$ = GetPipeToken$(REST$, 1)
-            K$ = GetPipeToken$(REST$, 2)
-            IF T$ <> "" AND K$ <> "" THEN
-                PRINT #1, "I|"; T$; "|"; K$; "|"; FN; "|"; RECNO
-            END IF
-RNext:
-        WEND
-        CLOSE #2
-
-        PRINT #1, "F|"; FN; "|"; BYTES
-        PRINT #1, "R|"; FN; "|"; RECNO
-    NEXT FN
-
-    CLOSE #1
-
-    REM Copy tmp over idx
-    OPEN TMPFN$ FOR INPUT AS #1
-    OPEN IDXFN$ FOR OUTPUT AS #2
-    WHILE NOT EOF(1)
-        INPUT #1, L$
-        PRINT #2, L$
-    WEND
-    CLOSE #1
-    CLOSE #2
-
-    OPEN TMPFN$ FOR OUTPUT AS #1
-    CLOSE #1
-
-    REM Final cleanup pass
-    GOSUB CompactIdx
-    SQL_MSG$ = "REINDEX OK"
-    RETURN
-
-
-REM ==============================================================
-REM  Token helpers (simple, no-quote CSV)
-REM ==============================================================
-GetPipeToken$:
-    REM IN: S$, N  OUT: token
-    GetPipeToken$ = GetDelimToken$(S$, "|", N)
-    RETURN
-
-GetCSVToken$:
-    REM IN: S$, N  OUT: token
-    GetCSVToken$ = GetDelimToken$(S$, ",", N)
-    RETURN
-
 GetDelimToken$:
-    REM Very small tokenizer: N is 1-based
     TMP$ = S$
     P = 1
     K = 1
@@ -1168,17 +939,14 @@ GetDelimToken$:
         ELSE
             PART$ = MID$(TMP$, P, Q-1)
         END IF
-
         IF K = N THEN
-            GetDelimToken$ = TRIM$(PART$)
+            GETD$ = TRIM$(PART$)
             RETURN
         END IF
-
         IF Q = 0 THEN
-            GetDelimToken$ = ""
+            GETD$ = ""
             RETURN
         END IF
-
         P = P + Q
         K = K + 1
     WEND

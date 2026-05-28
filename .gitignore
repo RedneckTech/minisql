@@ -1,0 +1,8 @@
+*.o
+*.obj
+*.exe
+*.bak
+*.swp
+.DS_Store
+basic_manual.md
+minisql_design.txt
