@@ -115,7 +115,8 @@ InitLog:
     IF EOF(1) THEN
         CLOSE #1
         OPEN LOGFN$ FOR OUTPUT AS #1
-        PRINT #1, "HDR|" + DBPFX$ + "|" + OPT{"100"} + "|" + DATE$() + "T" + TIME$()
+        HDR$ = "HDR|" + DBPFX$ + "|" + OPT{"100"} + "|"
+        PRINT #1, HDR$ + DATE$() + "T" + TIME$()
         PRINT #1, "OPT|100|" + OPT{"100"}
         FOR I = 101 TO 109
             PRINT #1, "OPT|" + STR$(I) + "|" + OPT{STR$(I)}
@@ -126,7 +127,9 @@ InitLog:
         FOR I = 300 TO 309
             PRINT #1, "OPT|" + STR$(I) + "|" + OPT{STR$(I)}
         NEXT I
-        LBL$ = "OPEN": MSG$ = "Log created for database " + DBPFX$: GOSUB LogEvent
+        LBL$ = "OPEN"
+        MSG$ = "Log created for database " + DBPFX$
+        GOSUB LogEvent
         RETURN
     END IF
 
@@ -146,7 +149,9 @@ InitLog:
     CLOSE #1
 
     OPEN LOGFN$ FOR APPEND AS #1
-    LBL$ = "OPEN": MSG$ = "Database " + DBPFX$ + " opened": GOSUB LogEvent
+    LBL$ = "OPEN"
+    MSG$ = "Database " + DBPFX$ + " opened"
+    GOSUB LogEvent
     RETURN
 
 
@@ -159,7 +164,8 @@ LogEvent:
     IF OPT{"200"} <> "1" THEN RETURN
     LV = VAL(OPT{"201"})
     IF LV = 0 AND LBL$ <> "ERROR" THEN RETURN
-    PRINT #1, "EVENT|" + LBL$ + "|" + DATE$() + "T" + TIME$() + "|" + MSG$
+    E$ = "EVENT|" + LBL$ + "|" + DATE$() + "T" + TIME$()
+    PRINT #1, E$ + "|" + MSG$
     RETURN
 
 
@@ -168,7 +174,9 @@ REM  INITDB - create schema ISAM and seed it
 REM ==============================================================
 InitDB:
     GOSUB EnsureSchemaTable
-    LBL$ = "OPEN": MSG$ = "Database " + DBPFX$ + " initialized": GOSUB LogEvent
+    LBL$ = "OPEN"
+    MSG$ = "Database " + DBPFX$ + " initialized"
+    GOSUB LogEvent
     SQL_MSG$ = "INITDB OK"
     RETURN
 
@@ -288,14 +296,18 @@ ExecSQL:
     IF SQL_MODE$ = "RO" THEN
         IF LEFT$(UP$, 6) <> "SELECT" THEN
             SQL_STATUS=20: SQL_MSG$="READ-ONLY MODE"
-            LBL$ = "WARNING": MSG$ = "Write denied in RO mode": GOSUB LogEvent
+            LBL$ = "WARNING"
+            MSG$ = "Write denied in RO mode"
+            GOSUB LogEvent
             RETURN
         END IF
     END IF
     IF SQL_MODE$ = "AO" THEN
         IF LEFT$(UP$, 6) <> "INSERT" THEN
             SQL_STATUS=21: SQL_MSG$="APPEND-ONLY MODE"
-            LBL$ = "WARNING": MSG$ = "Non-INSERT denied in AO mode": GOSUB LogEvent
+            LBL$ = "WARNING"
+            MSG$ = "Non-INSERT denied in AO mode"
+            GOSUB LogEvent
             RETURN
         END IF
     END IF
@@ -442,7 +454,9 @@ AppendRecord:
     OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
     PUT #3, R{}
     CLOSE #3
-    LBL$ = "APPENDED": MSG$ = "INSERT " + STEMP$ + " KEY " + KTEMP$: GOSUB LogEvent
+    LBL$ = "APPENDED"
+    MSG$ = "INSERT " + STEMP$ + " KEY " + KTEMP$
+    GOSUB LogEvent
     RETURN
 
 
@@ -487,7 +501,8 @@ DoSelect:
         IF EQ = 0 THEN SQL_STATUS=52: SQL_MSG$="BAD WHERE": RETURN
         WCOL$ = TRIM$(LEFT$(WCLAUSE$, EQ-1))
         WVAL$ = TRIM$(MID$(WCLAUSE$, EQ+1))
-        IF UCASE$(WCOL$) = "KEY" OR UCASE$(WCOL$) = UCASE$(PK$) THEN WHEREKEY = 1
+        IF UCASE$(WCOL$) = "KEY" THEN WHEREKEY = 1
+        IF UCASE$(WCOL$) = UCASE$(PK$) THEN WHEREKEY = 1
     END IF
 
     IF PO > 0 THEN
@@ -674,7 +689,9 @@ DoUpdate:
     IF FOUND(3) THEN
         R{UCOL$} = UVAL$
         PUT #3, R{}
-        LBL$ = "UPDATED": MSG$ = "UPDATE " + TBL$ + " KEY " + KEY$ + " " + UCOL$ + "=" + UVAL$
+        LBL$ = "UPDATED"
+        MSG$ = "UPDATE " + TBL$ + " KEY " + KEY$
+        MSG$ = MSG$ + " " + UCOL$ + "=" + UVAL$
         GOSUB LogEvent
     ELSE
         SQL_STATUS=66: SQL_MSG$="KEY NOT FOUND"
@@ -744,7 +761,9 @@ DoReplace:
     OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
     PUT #3, R{}
     CLOSE #3
-    LBL$ = "UPDATED": MSG$ = "REPLACE " + TBL$ + " KEY " + KEY$: GOSUB LogEvent
+    LBL$ = "UPDATED"
+    MSG$ = "REPLACE " + TBL$ + " KEY " + KEY$
+    GOSUB LogEvent
     SQL_MSG$ = "REPLACED " + TBL$ + " KEY " + KEY$
     RETURN
 
@@ -772,7 +791,9 @@ DoDelete:
     OPEN TFN$ FOR INDEXED AS #3 KEY = "key"
     DELETE #3, KEY = KEY$
     CLOSE #3
-    LBL$ = "DELETED": MSG$ = "DELETE " + TBL$ + " KEY " + KEY$: GOSUB LogEvent
+    LBL$ = "DELETED"
+    MSG$ = "DELETE " + TBL$ + " KEY " + KEY$
+    GOSUB LogEvent
     SQL_MSG$ = "DELETED " + TBL$ + " KEY " + KEY$
     RETURN
 
@@ -939,7 +960,9 @@ TxnCommit:
                 CLOSE #4
                 SQL_STMT$ = OLD$
                 SQL_MODE$ = OLDM$
-                SQL_MSG$ = "TXN ABORTED AT STMT " + STR$(N) + ": " + SQL_MSG$
+                TMPMSG$ = SQL_MSG$
+                SQL_MSG$ = "TXN ABORTED AT STMT "
+                SQL_MSG$ = SQL_MSG$ + STR$(N) + ": " + TMPMSG$
                 LBL$ = "ERROR"
                 MSG$ = "Transaction aborted at stmt " + STR$(N)
                 GOSUB LogEvent
@@ -953,7 +976,8 @@ TxnCommit:
     CLOSE #4
     SQL_STMT$ = OLD$
     SQL_MODE$ = OLDM$
-    LBL$ = "CLOSED": MSG$ = "Transaction committed (" + STR$(N) + " stmts)"
+    LBL$ = "CLOSED"
+    MSG$ = "Transaction committed (" + STR$(N) + " stmts)"
     GOSUB LogEvent
     SQL_MSG$ = "TXN COMMIT (" + STR$(N) + " stmts)"
     RETURN
