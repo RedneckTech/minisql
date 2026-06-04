@@ -1,6 +1,7 @@
 REM ==============================================================
 REM  test_search.bas  —  SEARCH modes
 REM ==============================================================
+START:
 COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$
 COMMON SQL_STATUS, SQL_MSG$
 

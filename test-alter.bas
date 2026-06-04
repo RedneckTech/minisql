@@ -1,6 +1,7 @@
 REM ==============================================================
 REM  test_alter.bas  —  ALTER TABLE ADD/DROP
 REM ==============================================================
+START:
 COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$
 COMMON SQL_STATUS, SQL_MSG$
 
