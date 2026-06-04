@@ -77,11 +77,11 @@ REM  Helpers: sanitize DB name ( '_' -> '-' )
 REM ==============================================================
 SanitizeDB:
     DBPFX$ = ""
-    FOR I = 1 TO LEN(SQL_DB$)
-        C$ = MID$(SQL_DB$, I, 1)
+    FOR J = 1 TO LEN(SQL_DB$)
+        C$ = MID$(SQL_DB$, J, 1)
         IF C$ = "_" THEN C$ = "-"
         DBPFX$ = DBPFX$ + C$
-    NEXT I
+    NEXT J
     RETURN
 
 
@@ -454,10 +454,10 @@ AppendRecord:
     R{"key"} = KTEMP$
     CI = 1
     WHILE 1
-        S$ = CTEMP$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        S$ = CTEMP$: D$ = ",": N = CI: GOSUB GetToken
         COL$ = GETD$
         IF COL$ = "" THEN EXIT WHILE
-        S$ = VTEMP$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        S$ = VTEMP$: D$ = ",": N = CI: GOSUB GetToken
         VV$ = GETD$
         R{COL$} = VV$
         CI = CI + 1
@@ -639,16 +639,18 @@ SNX3:
     END IF
 
     IF HASSORT = 1 OR HASDIST = 1 THEN
-        FOR SI = 0 TO RCNT - 1
-            SQL_RESULT$ = SQL_RESULT$ + RSLT$(SI) + CHR$(10)
-        NEXT SI
+        FOR RI = 0 TO RCNT - 1
+            SQL_RESULT$ = SQL_RESULT$ + RSLT$(RI) + CHR$(10)
+        NEXT RI
     END IF
 
     SQL_MSG$ = "OK"
     RETURN
 
+REM===============================================================
 REM  Build a result row from the current R{}
 REM  IN: R{}, SPK$, SCOLS$, SELALL, SELCOLS$  OUT: FMT$
+REM===============================================================
 BuildRowFromRec:
     FMT$ = "R|" + SPK$ + "|" + R{SPK$}
     IF SELALL = 0 THEN
@@ -658,7 +660,7 @@ BuildRowFromRec:
     END IF
     CI = 1
     WHILE 1
-        S$ = COLSET$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        S$ = COLSET$: D$ = ",": N = CI: GOSUB GetToken
         C$ = GETD$
         IF C$ = "" THEN EXIT WHILE
         FMT$ = FMT$ + "|" + C$ + "=" + R{C$}
@@ -843,7 +845,7 @@ ValidateCol:
     IF COL$ = "" THEN RETURN
     CI = 1
     WHILE 1
-        S$ = COLS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        S$ = COLS$: D$ = ",": N = CI: GOSUB GetToken
         C$ = GETD$
         IF C$ = "" THEN EXIT WHILE
         IF UCASE$(C$) = UCASE$(COL$) THEN VALID = 1: RETURN
@@ -892,7 +894,7 @@ DoUpdate:
         SETLOG$ = ""
         SCI = 1
         WHILE 1
-            S$ = SET$: D$ = ",": N = SCI: GOSUB GetDelimToken$
+            S$ = SET$: D$ = ",": N = SCI: GOSUB GetToken
             ASGN$ = GETD$
             IF ASGN$ = "" THEN EXIT WHILE
             EQ = INSTR(ASGN$, "=")
@@ -933,7 +935,7 @@ DoUpdate:
                 SCI = 1
                 WHILE 1
                     S$ = SET$: D$ = ",": N = SCI
-                    GOSUB GetDelimToken$
+                    GOSUB GetToken
                     ASGN$ = GETD$
                     IF ASGN$ = "" THEN EXIT WHILE
                     EQ = INSTR(ASGN$, "=")
@@ -1011,10 +1013,10 @@ DoReplace:
     R{"key"} = KEY$
     CI = 1
     WHILE 1
-        S$ = COLS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        S$ = COLS$: D$ = ",": N = CI: GOSUB GetToken
         COL$ = GETD$
         IF COL$ = "" THEN EXIT WHILE
-        S$ = VALS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        S$ = VALS$: D$ = ",": N = CI: GOSUB GetToken
         VV$ = GETD$
         R{COL$} = VV$
         CI = CI + 1
@@ -1195,7 +1197,7 @@ DoAlter:
         NEWCOLS$ = ""
         CI = 1
         WHILE 1
-            S$ = COLS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+            S$ = COLS$: D$ = ",": N = CI: GOSUB GetToken
             C$ = GETD$
             IF C$ = "" THEN EXIT WHILE
             IF UCASE$(C$) <> UCASE$(DCOL$) THEN
@@ -1223,13 +1225,13 @@ REM ==============================================================
 SearchCmd:
     SQL_RESULT$ = ""
 
-    S$ = SQL_STMT$: D$ = "|": N = 1: GOSUB GetDelimToken$
+    S$ = SQL_STMT$: D$ = "|": N = 1: GOSUB GetToken
     TBL$ = GETD$
-    S$ = SQL_STMT$: D$ = "|": N = 2: GOSUB GetDelimToken$
+    S$ = SQL_STMT$: D$ = "|": N = 2: GOSUB GetToken
     TERM$ = GETD$
-    S$ = SQL_STMT$: D$ = "|": N = 3: GOSUB GetDelimToken$
+    S$ = SQL_STMT$: D$ = "|": N = 3: GOSUB GetToken
     COLF$ = GETD$
-    S$ = SQL_STMT$: D$ = "|": N = 4: GOSUB GetDelimToken$
+    S$ = SQL_STMT$: D$ = "|": N = 4: GOSUB GetToken
     SMODE$ = UCASE$(GETD$)
 
     IF TBL$ = "" OR TERM$ = "" THEN
@@ -1258,7 +1260,7 @@ SearchCmd:
             FOUND$ = "0"
             CI = 1
             WHILE 1
-                S$ = SCOLS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+                S$ = SCOLS$: D$ = ",": N = CI: GOSUB GetToken
                 C$ = GETD$
                 IF C$ = "" THEN EXIT WHILE
                 GOSUB MatchField
@@ -1301,7 +1303,7 @@ BuildResultRow:
     FMT$ = "R|" + SPK$ + "|" + R{SPK$}
     CI = 1
     WHILE 1
-        S$ = SCOLS$: D$ = ",": N = CI: GOSUB GetDelimToken$
+        S$ = SCOLS$: D$ = ",": N = CI: GOSUB GetToken
         C$ = GETD$
         IF C$ = "" THEN EXIT WHILE
         FMT$ = FMT$ + "|" + C$ + "=" + R{C$}
@@ -1380,7 +1382,7 @@ TxnCommit:
 REM ==============================================================
 REM  Token helper (uses S$, D$, N as input, returns GETD$)
 REM ==============================================================
-GetDelimToken$:
+GetToken:
     TMP$ = S$
     P = 1
     K = 1
