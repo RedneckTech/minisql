@@ -20,12 +20,18 @@ START:
     DIM DLINK$(30)
     DIM DKEY$(30)
     DIM TGTCOL$(40)
+    DIM ROWKEYS$(15)
+    DIM ROWLINES$(15)
+    DIM PAGEKEYS$(20)
+    DIM RN$(40)
+    DIM RV$(40)
     GOSUB WB_BOOT
     SCREEN = 1
     WHILE SCREEN <> 0
         IF SCREEN = 1 THEN GOSUB SCR_START
         IF SCREEN = 2 THEN GOSUB SCR_TABLES
         IF SCREEN = 3 THEN GOSUB SCR_DESIGN
+        IF SCREEN = 4 THEN GOSUB SCR_BROWSE
         X = SLEEP(0.25)
     WEND
     END
@@ -36,6 +42,7 @@ REM  Boot: defaults, horizontal rule, batch reset, registry
 REM ==============================================================
 WB_BOOT:
     SQL_MODE$ = "RW"
+    PAGESZ = 15
     TLOADED = 0
     LLOADED = 0
     RNEED = 0
@@ -247,6 +254,48 @@ WB_PARSECOUNT:
     CNT = VAL(MID$(SQL_RESULT$, 7))
     RETURN
 
+WB_PARSEROW:
+    REM IN: ROWL$  OUT: RFN, RN$(), RV$(), RKN$, RKV$
+    RFN = 0
+    RKN$ = ""
+    RKV$ = ""
+    S$ = ROWL$
+    D$ = "|"
+    N = 1
+    GOSUB WB_GETTOK
+    IF GETD$ <> "R" THEN RETURN
+    S$ = ROWL$
+    D$ = "|"
+    N = 2
+    GOSUB WB_GETTOK
+    RKN$ = GETD$
+    S$ = ROWL$
+    D$ = "|"
+    N = 3
+    GOSUB WB_GETTOK
+    RKV$ = GETD$
+    PN = 4
+    PWHILE = 1
+    WHILE PWHILE = 1
+        S$ = ROWL$
+        D$ = "|"
+        N = PN
+        GOSUB WB_GETTOK
+        PTOK$ = GETD$
+        IF PTOK$ = "" THEN
+            PWHILE = 0
+        ELSE
+            PEQ = INSTR(PTOK$, "=")
+            IF PEQ > 0 AND RFN < 40 THEN
+                RFN = RFN + 1
+                RN$(RFN) = LEFT$(PTOK$, PEQ-1)
+                RV$(RFN) = MID$(PTOK$, PEQ+1)
+            END IF
+            PN = PN + 1
+        END IF
+    WEND
+    RETURN
+
 
 REM ==============================================================
 REM  Table/column name validation
@@ -410,6 +459,39 @@ WB_INSERTROW:
         RETURN
     END IF
     GOSUB WB_EXEC
+    RETURN
+
+WB_LOADPAGE:
+    IF PAGE <= 1 THEN
+        SQL_STMT$ = "SELECT * FROM " + TBL$
+        SQL_STMT$ = SQL_STMT$ + " LIMIT " + TRIM$(STR$(PAGESZ))
+    ELSE
+        SQL_STMT$ = "SELECT * FROM " + TBL$
+        SQL_STMT$ = SQL_STMT$ + " WHERE key>" + LASTKEY$
+        SQL_STMT$ = SQL_STMT$ + " LIMIT " + TRIM$(STR$(PAGESZ))
+    END IF
+    GOSUB WB_EXEC
+    ROWN = 0
+    IF SQL_STATUS <> 0 THEN RETURN
+    GOSUB WB_SPLIT
+    FOR RI = 1 TO RESN
+        IF ROWN < PAGESZ THEN
+            ROWL$ = RESL$(RI)
+            GOSUB WB_PARSEROW
+            ROWN = ROWN + 1
+            ROWKEYS$(ROWN) = RKV$
+            ROWLINES$(ROWN) = "  " + TRIM$(STR$(ROWN))
+            ROWLINES$(ROWN) = ROWLINES$(ROWN) + "  key=" + RKV$
+            FOR RJ = 1 TO RFN
+                ROWLINES$(ROWN) = ROWLINES$(ROWN) + "  " + RN$(RJ)
+                ROWLINES$(ROWN) = ROWLINES$(ROWN) + "=" + RV$(RJ)
+            NEXT RJ
+            IF LEN(ROWLINES$(ROWN)) > 74 THEN
+                ROWLINES$(ROWN) = LEFT$(ROWLINES$(ROWN), 72) + ".."
+            END IF
+        END IF
+    NEXT RI
+    IF ROWN > 0 THEN LASTKEY$ = ROWKEYS$(ROWN)
     RETURN
 
 
@@ -968,7 +1050,7 @@ SCR_DESIGN:
     GOSUB WB_LINKSFOR
     GOSUB WB_CLS
     TITLE$ = "MiniSQL Workbench"
-    FOOT$ = "A=add  D n=drop  L=link  X n=unlink  T=drop  B=back"
+    FOOT$ = "A=add  D n=drop  L=link  X n=unlink  T=drop  B=rows  Q=back"
     GOSUB WB_HEADER
     TEXT$ = "  Table: " + TBL$
     GOSUB WB_LINE
@@ -1001,8 +1083,14 @@ SCR_DESIGN:
     GOSUB WB_FOOTER
     PROMPT$ = "Selection: "
     GOSUB WB_PROMPT
-    IF UCASE$(ANS$) = "B" OR UCASE$(ANS$) = "Q" THEN
+    IF UCASE$(ANS$) = "Q" THEN
         SCREEN = 2
+        RETURN
+    END IF
+    IF UCASE$(ANS$) = "B" THEN
+        PAGE = 1
+        LASTKEY$ = ""
+        SCREEN = 4
         RETURN
     END IF
     IF UCASE$(ANS$) = "A" THEN
@@ -1193,4 +1281,145 @@ SCR_INSERT:
         ERR$ = SQL_MSG$
         GOSUB WB_ERR
     END IF
+    RETURN
+
+REM ==============================================================
+REM  Row browser
+REM ==============================================================
+SCR_BROWSE:
+    PAGE = 1
+    LASTKEY$ = ""
+    GOSUB WB_LOADPAGE
+    PAGEKEYS$(1) = LASTKEY$
+    MOREBR = 1
+    WHILE MOREBR = 1
+        GOSUB WB_CLS
+        TITLE$ = "MiniSQL Workbench"
+        FOOT$ = "N=next  P=prev  V n=view  I=insert  B=back"
+        GOSUB WB_HEADER
+        TEXT$ = "  Table: " + TBL$ + "    Page "
+        TEXT$ = TEXT$ + TRIM$(STR$(PAGE))
+        GOSUB WB_LINE
+        TEXT$ = "  Rows: " + TRIM$(STR$(ROWN))
+        GOSUB WB_LINE
+        TEXT$ = ""
+        GOSUB WB_LINE
+        IF ROWN = 0 THEN
+            TEXT$ = "  No rows."
+            GOSUB WB_LINE
+        ELSE
+            FOR RI = 1 TO ROWN
+                TEXT$ = ROWLINES$(RI)
+                GOSUB WB_LINE
+            NEXT RI
+        END IF
+        TEXT$ = ""
+        GOSUB WB_LINE
+        GOSUB WB_FOOTER
+        PROMPT$ = "Selection: "
+        GOSUB WB_PROMPT
+        IF UCASE$(ANS$) = "B" OR UCASE$(ANS$) = "Q" THEN
+            MOREBR = 0
+        ELSEIF UCASE$(ANS$) = "N" THEN
+            IF ROWN = PAGESZ THEN
+                PAGE = PAGE + 1
+                LASTKEY$ = PAGEKEYS$(PAGE-1)
+                GOSUB WB_LOADPAGE
+                PAGEKEYS$(PAGE) = LASTKEY$
+            END IF
+        ELSEIF UCASE$(ANS$) = "P" THEN
+            IF PAGE > 1 THEN
+                PAGE = PAGE - 1
+                IF PAGE = 1 THEN
+                    LASTKEY$ = ""
+                ELSE
+                    LASTKEY$ = PAGEKEYS$(PAGE-1)
+                END IF
+                GOSUB WB_LOADPAGE
+                PAGEKEYS$(PAGE) = LASTKEY$
+            END IF
+        ELSEIF UCASE$(ANS$) = "R" THEN
+            IF PAGE = 1 THEN
+                LASTKEY$ = ""
+            ELSE
+                LASTKEY$ = PAGEKEYS$(PAGE-1)
+            END IF
+            GOSUB WB_LOADPAGE
+            PAGEKEYS$(PAGE) = LASTKEY$
+        ELSEIF UCASE$(ANS$) = "I" THEN
+            GOSUB SCR_INSERT
+            PAGE = 1
+            LASTKEY$ = ""
+            GOSUB WB_LOADPAGE
+            PAGEKEYS$(1) = LASTKEY$
+        ELSEIF LEFT$(UCASE$(ANS$), 2) = "V " THEN
+            S$ = ANS$
+            D$ = " "
+            N = 2
+            GOSUB WB_GETTOK
+            VN = VAL(GETD$)
+            IF VN < 1 OR VN > ROWN THEN
+                ERR$ = "BAD ROW NUMBER"
+                GOSUB WB_ERR
+            ELSE
+                SELROW = VN
+                GOSUB SCR_VIEW
+            END IF
+        ELSEIF UCASE$(ANS$) = "V" THEN
+            PROMPT$ = "Row number: "
+            GOSUB WB_PROMPT
+            VN = VAL(TRIM$(ANS$))
+            IF VN < 1 OR VN > ROWN THEN
+                ERR$ = "BAD ROW NUMBER"
+                GOSUB WB_ERR
+            ELSE
+                SELROW = VN
+                GOSUB SCR_VIEW
+            END IF
+        ELSE
+            ERR$ = "UNKNOWN SELECTION"
+            GOSUB WB_ERR
+        END IF
+        X = SLEEP(0.1)
+    WEND
+    SCREEN = 3
+    RETURN
+
+
+REM ==============================================================
+REM  View one row
+REM ==============================================================
+SCR_VIEW:
+    RK$ = ROWKEYS$(SELROW)
+    SQL_STMT$ = "SELECT * FROM " + TBL$ + " WHERE KEY=" + RK$
+    GOSUB WB_EXEC
+    IF SQL_STATUS <> 0 THEN
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    GOSUB WB_SPLIT
+    IF RESN = 0 THEN
+        ERR$ = "ROW NOT FOUND"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    ROWL$ = RESL$(1)
+    GOSUB WB_PARSEROW
+    GOSUB WB_CLS
+    TITLE$ = "MiniSQL Workbench"
+    FOOT$ = "Press ENTER to return"
+    GOSUB WB_HEADER
+    TEXT$ = "  Table: " + TBL$ + "    Key: " + RKV$
+    GOSUB WB_LINE
+    TEXT$ = ""
+    GOSUB WB_LINE
+    FOR RJ = 1 TO RFN
+        TEXT$ = "  " + RN$(RJ) + " = " + RV$(RJ)
+        GOSUB WB_LINE
+    NEXT RJ
+    TEXT$ = ""
+    GOSUB WB_LINE
+    GOSUB WB_FOOTER
+    INPUT "Press ENTER...", X$
     RETURN

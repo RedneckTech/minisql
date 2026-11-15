@@ -189,8 +189,8 @@ SCENARIOS["tables"] = {
     "prog": "dbwork",
     "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST2_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
     "inputs": ["N", "WBTEST2",
-               "N", "customers", "id,name,email,city", "B",
-               "N", "orders", "id,customer_id,date,status", "B",
+               "N", "customers", "id,name,email,city", "Q",
+               "N", "orders", "id,customer_id,date,status", "Q",
                "N", "zzlinks", "",
                "N", "bad", "credit_limit,x", "",
                "N", "bad name", "a,b", ""],
@@ -204,7 +204,7 @@ SCENARIOS["design"] = {
     "prog": "dbwork",
     "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST2_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
     "inputs": ["N", "WBTEST2", "N", "customers", "id,name,email,city",
-               "A", "phone", "D", "5", "Y", "T", "x", "B",
+               "A", "phone", "D", "5", "Y", "T", "x", "Q",
                "N", "one", "a", "D", "1", "", "T", "one"],
     "must": ["Table: customers", "phone", "LAST COLUMN", "Dropped"],
     "must_not": ["?SYNTAX", "?ILLEGAL"],
@@ -213,7 +213,7 @@ SCENARIOS["design"] = {
 SCENARIOS["dropcancel"] = {
     "prog": "dbwork",
     "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST2_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
-    "inputs": ["N", "WBTEST2", "N", "customers", "id,name", "T", "x", "B"],
+    "inputs": ["N", "WBTEST2", "N", "customers", "id,name", "T", "x", "Q"],
     "must": ["customers"],
     "must_not": ["?SYNTAX", "UNKNOWN SELECTION"],
     "final_must": ["DB: WBTEST2"],
@@ -222,20 +222,20 @@ SCENARIOS["dropcancel"] = {
 SCENARIOS["links"] = {
     "prog": "dbwork",
     "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST3_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
-    "inputs": ["N", "WBTEST3", "N", "customers", "id,name", "B",
-               "N", "orders", "id,customer_id,date", "B",
-               "1", "L", "2", "2", "3", "B",
-               "1", "L", "2", "1", "2", "B"],
+    "inputs": ["N", "WBTEST3", "N", "customers", "id,name", "Q",
+               "N", "orders", "id,customer_id,date", "Q",
+               "1", "L", "2", "2", "3", "Q",
+               "1", "L", "2", "1", "2", "Q"],
     "must": ["customers.id -> orders.customer_id", "customers.id -> customers.id"],
     "must_not": ["?SYNTAX", "?ILLEGAL"],
 }
 SCENARIOS["linkdrop"] = {
     "prog": "dbwork",
     "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST3B_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
-    "inputs": ["N", "WBTEST3B", "N", "customers", "id,name", "B",
-               "N", "orders", "id,customer_id,date", "B",
-               "1", "L", "2", "2", "3", "B",
-               "1", "D", "1", "Y", "B", "1"],
+    "inputs": ["N", "WBTEST3B", "N", "customers", "id,name", "Q",
+               "N", "orders", "id,customer_id,date", "Q",
+               "1", "L", "2", "2", "3", "Q",
+               "1", "D", "1", "Y", "Q", "1"],
     "must": ["1 link removed", "Links: (none)"],
     "must_not": ["?SYNTAX", "?ILLEGAL"],
 }
@@ -251,6 +251,23 @@ SCENARIOS["insert"] = {
     "must": ["Inserted", "BAD VALUE", "Rows: 2"],
     "must_not": ["?SYNTAX", "?ILLEGAL", "?STRING"],
     "final_must": ["Rows: 2"],
+}
+
+SCENARIOS["browse"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST7_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "pre": "wbfill",
+    "step_wait": 5.0,
+    "inputs": ["N", "WBTEST7", "1", "B", "V", "1", "", "N", "N", "P"],
+    "must": ["Page 1", "k01", "k15", "Page 2", "k16", "Page 3", "k31", "k40", "label1"],
+    "must_not": ["?SYNTAX", "?ILLEGAL", "?STRING"],
+}
+SCENARIOS["browseempty"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST7B_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": ["N", "WBTEST7B", "N", "items", "label,val", "B"],
+    "must": ["No rows"],
+    "must_not": ["?SYNTAX"],
 }
 
 
