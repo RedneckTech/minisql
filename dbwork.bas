@@ -291,6 +291,36 @@ WB_VALNAME:
     IF VU$ = "PK" THEN VBAD = 1
     RETURN
 
+WB_VALVAL:
+    VBAD = 0
+    IF LEN(V$) > 120 THEN VBAD = 1
+    IF INSTR(V$, ",") > 0 THEN VBAD = 1
+    IF INSTR(V$, "|") > 0 THEN VBAD = 1
+    IF INSTR(V$, ")") > 0 THEN VBAD = 1
+    RETURN
+
+WB_VALKEY:
+    VBAD = 0
+    IF V$ = "" THEN
+        VBAD = 1
+        RETURN
+    END IF
+    FOR VI = 1 TO LEN(V$)
+        VC$ = MID$(V$, VI, 1)
+        VOK = 0
+        IF VC$ >= "0" AND VC$ <= "9" THEN VOK = 1
+        IF UCASE$(VC$) >= "A" AND UCASE$(VC$) <= "Z" THEN VOK = 1
+        IF VC$ = "." OR VC$ = "-" OR VC$ = "_" THEN VOK = 1
+        IF VOK = 0 THEN
+            VBAD = 1
+            RETURN
+        END IF
+    NEXT VI
+    VU$ = UCASE$(V$)
+    IF INSTR(VU$, "LIMIT") > 0 THEN VBAD = 1
+    IF INSTR(VU$, "VALUES") > 0 THEN VBAD = 1
+    RETURN
+
 
 REM ==============================================================
 REM  Load the table list and one table's columns
@@ -361,6 +391,24 @@ WB_DROPCOL:
 WB_DROPTABLE:
     REM IN: TBL$
     SQL_STMT$ = "DROP TABLE " + TBL$
+    GOSUB WB_EXEC
+    RETURN
+
+WB_INSERTROW:
+    REM IN: TBL$, KVAL$, VALS$
+    IERRLY = 0
+    IF KVAL$ = "" THEN
+        SQL_STMT$ = "INSERT INTO " + TBL$ + " VALUES (" + VALS$ + ")"
+    ELSE
+        SQL_STMT$ = "INSERT INTO " + TBL$ + " KEY " + KVAL$
+        SQL_STMT$ = SQL_STMT$ + " VALUES (" + VALS$ + ")"
+    END IF
+    IF LEN(SQL_STMT$) > 1800 THEN
+        ERR$ = "STATEMENT TOO LONG"
+        GOSUB WB_ERR
+        IERRLY = 1
+        RETURN
+    END IF
     GOSUB WB_EXEC
     RETURN
 
@@ -1091,8 +1139,7 @@ SCR_DESIGN:
         RETURN
     END IF
     IF UCASE$(ANS$) = "I" THEN
-        ERR$ = "INSERT ROW IS NOT IMPLEMENTED YET"
-        GOSUB WB_ERR
+        GOSUB SCR_INSERT
         RETURN
     END IF
     IF UCASE$(ANS$) = "V" THEN
@@ -1102,4 +1149,48 @@ SCR_DESIGN:
     END IF
     ERR$ = "UNKNOWN SELECTION"
     GOSUB WB_ERR
+    RETURN
+
+REM ==============================================================
+REM  Insert a row
+REM ==============================================================
+SCR_INSERT:
+    PROMPT$ = "Key (blank = auto): "
+    GOSUB WB_PROMPT
+    KVAL$ = TRIM$(ANS$)
+    IF KVAL$ <> "" THEN
+        V$ = KVAL$
+        GOSUB WB_VALKEY
+        IF VBAD = 1 THEN
+            ERR$ = "BAD KEY"
+            GOSUB WB_ERR
+            RETURN
+        END IF
+    END IF
+    VALS$ = ""
+    FOR CI = 1 TO COLNT
+        PROMPT$ = COLN$(CI) + ": "
+        GOSUB WB_PROMPT
+        V$ = TRIM$(ANS$)
+        GOSUB WB_VALVAL
+        IF VBAD = 1 THEN
+            ERR$ = "BAD VALUE"
+            GOSUB WB_ERR
+            RETURN
+        END IF
+        IF VALS$ <> "" THEN VALS$ = VALS$ + ","
+        VALS$ = VALS$ + V$
+    NEXT CI
+    GOSUB WB_INSERTROW
+    IF IERRLY = 1 THEN RETURN
+    IF SQL_STATUS = 0 THEN
+        STATUS$ = "Inserted"
+        RNEED = 1
+    ELSEIF SQL_STATUS = 47 THEN
+        ERR$ = "DUPLICATE KEY"
+        GOSUB WB_ERR
+    ELSE
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
+    END IF
     RETURN

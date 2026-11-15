@@ -240,6 +240,19 @@ SCENARIOS["linkdrop"] = {
     "must_not": ["?SYNTAX", "?ILLEGAL"],
 }
 
+SCENARIOS["insert"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST4_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": ["N", "WBTEST4", "N", "items", "label,val",
+               "I", "", "alpha", "100",
+               "I", "k2", "beta", "200",
+               "I", "", "a,b", "300", "",
+               "I", "", "a)b", "400", ""],
+    "must": ["Inserted", "BAD VALUE", "Rows: 2"],
+    "must_not": ["?SYNTAX", "?ILLEGAL", "?STRING"],
+    "final_must": ["Rows: 2"],
+}
+
 
 def main():
     names = sys.argv[1:] or ["smoke"]
