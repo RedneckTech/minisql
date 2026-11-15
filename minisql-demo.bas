@@ -1,5 +1,5 @@
 REM ==============================================================
-REM  minisql-demo.bas  —  Interactive MiniSQL demo with sample data
+REM  minisql-demo.bas   -   Interactive MiniSQL demo with sample data
 REM ==============================================================
 REM  RUN this program directly to explore MiniSQL features.
 REM  Pre-populates a demo employee database and provides a menu
@@ -155,24 +155,36 @@ ParseResult:
         RETURN
     END IF
     IF LEFT$(RR$, 4) = "TBL=" THEN
-        PRINT "Table: "; MID$(RR$, 4, INSTR(RR$+CHR$(10),CHR$(10))-1)
         P2 = INSTR(RR$, CHR$(10))
-        IF P2 > 0 THEN
+        IF P2 = 0 THEN
+            PRINT "Table: "; MID$(RR$, 5)
+        ELSE
+            PRINT "Table: "; MID$(RR$, 5, P2-5)
             RP$ = MID$(RR$, P2+1)
-            PRINT RP$
+            P3 = INSTR(RP$, CHR$(10))
+            IF P3 = 0 THEN
+                PRINT RP$
+            ELSE
+                PRINT LEFT$(RP$, P3-1)
+                PRINT MID$(RP$, P3+1)
+            END IF
         END IF
         RETURN
     END IF
 
     RI = 1
-    WHILE 1
+    MOREROW = 1
+    WHILE MOREROW = 1
         S$ = RR$: D$ = CHR$(10): N = RI: GOSUB GetToken
         ROWL$ = GETD$
-        IF ROWL$ = "" THEN EXIT WHILE
-        IF LEFT$(ROWL$, 2) = "R|" THEN GOSUB ShowRow
-        IF LEFT$(ROWL$, 2) <> "R|" THEN PRINT ROWL$
-        RI = RI + 1
-        IF (RI MOD 25) = 0 THEN X = SLEEP(0.05)
+        IF ROWL$ = "" THEN
+            MOREROW = 0
+        ELSE
+            IF LEFT$(ROWL$, 2) = "R|" THEN GOSUB ShowRow
+            IF LEFT$(ROWL$, 2) <> "R|" THEN PRINT ROWL$
+            RI = RI + 1
+            IF (RI MOD 25) = 0 THEN X = SLEEP(0.1)
+        END IF
     WEND
     RETURN
 
@@ -198,7 +210,7 @@ ShowRow:
             PRINT "  "; LEFT$(RST$, P3-1)
             RST$ = MID$(RST$, P3+1)
         END IF
-        IF LEN(RST$) > 1000 THEN X = SLEEP(0.05)
+        IF LEN(RST$) > 1000 THEN X = SLEEP(0.1)
     WEND
     PRINT
     RETURN
@@ -612,6 +624,6 @@ GetToken:
         END IF
         P = P + Q
         K = K + 1
-        X = SLEEP(0.05)
+        X = SLEEP(0.1)
     WEND
     RETURN
