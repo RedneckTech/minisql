@@ -1,4 +1,4 @@
-# MiniSQL (TIMESHARING BASIC) v0.5.0 — Chainable Tiny SQL-ish Database
+# MiniSQL (TIMESHARING BASIC) v0.6.0 — Chainable Tiny SQL-ish Database
 
 MiniSQL is a small, **chainable** SQL-ish database engine written for
 **TIMESHARING BASIC / 3270BBS-style BASIC**.
@@ -23,7 +23,7 @@ projects without rewriting storage/search logic every time.
 
 - **Multiple tables**
   
-  - Table schemas stored in a system ISAM table (`<db>.schema.idx`)
+  - Table schemas stored in a system ISAM table (`<db>_schema.idx`)
 
 - **Full CRUD + DROP + ALTER + SHOW + DESCRIBE**
   
@@ -69,7 +69,7 @@ projects without rewriting storage/search logic every time.
 
 - **Event logging**
   
-  - All operations logged to `<db>.log.dat` with timestamps
+  - All operations logged to `<db>_log.dat` with timestamps
   - Labels: OPEN, CLOSED, UPDATED, APPENDED, DELETED, WARNING, ERROR
 
 - **Configurable option codes**
@@ -88,22 +88,30 @@ projects without rewriting storage/search logic every time.
 
 ## Project Files
 
-- `minisql.bas` — the chainable database engine (1386 lines)
+- `minisql.bas` — the chainable database engine
+- `test-runner.bas` — the 14-test regression suite
+- `verify*.bas` — behavioral verification suites
+- `minisql-demo.bas` — interactive feature demo
 
 ---
 
 ## File Naming Rules
 
-The terminal/filesystem rules for this project include:
+Data filenames allow letters, digits, `_`, and one dot. MiniSQL
+encodes DB and table names reversibly:
 
-- Filenames **cannot** contain `_`
-- MiniSQL uses `-` instead.
+- `-` becomes `_`
+- `_` becomes `__`
+- any other character becomes `_`
+
+This keeps `a-b` and `a_b` in separate files. Program (`.bas`)
+filenames cannot contain `_`.
 
 Generated files for `SQL_DB$ = "testdb"` with table `people`:
 
-- `testdb.log.dat` — event log
-- `testdb.schema.idx` — system ISAM table for schemas
-- `testdb.people.idx` — ISAM file per user table
+- `testdb_log.dat` — event log
+- `testdb_schema.idx` — system ISAM table for schemas
+- `testdb_people.idx` — ISAM file per user table
 - `batch.dat` — transaction queue (global)
 
 ---

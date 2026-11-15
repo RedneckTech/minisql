@@ -1,4 +1,4 @@
-# MiniSQL User Manual (minisql.bas) — v0.5.0
+# MiniSQL User Manual (minisql.bas) — v0.6.0
 
 MiniSQL is a tiny SQL-ish database engine designed for
 TIMESHARING BASIC / 3270BBS-style BASIC.
@@ -78,8 +78,8 @@ MiniSQL is not full SQL. It is intentionally small and file-based.
 MiniSQL exists to live within platform limits:
 
 - Data file size: max 256KB per ISAM file
-- Open file handles: max 4 at one time
-  (uses #1=log, #2=schema, #3=table, #4=batch)
+- Open file handles used by MiniSQL: 4
+  (#1=log, #2=schema, #3=table, #4=batch)
 - Watchdog safety: long loops call `SLEEP(0.25)` periodically
 - Result set sort limit: max 500 rows in memory (ORDER BY)
 
@@ -89,15 +89,17 @@ MiniSQL exists to live within platform limits:
 
 Assuming `SQL_DB$ = "TESTDB"` and table `people`, MiniSQL creates:
 
-- `TESTDB.log.dat` — event log (always open as file #1)
-- `TESTDB.schema.idx` — ISAM system table storing schemas
-- `TESTDB.people.idx` — ISAM file per user table
+- `TESTDB_log.dat` — event log (always open as file #1)
+- `TESTDB_schema.idx` — ISAM system table storing schemas
+- `TESTDB_people.idx` — ISAM file per user table
 - `batch.dat` — transaction queue (global, not per-database)
 
 ### Filename rules
 
-The system does not allow `_` in filenames.
-MiniSQL converts `_` to `-` in your DB prefix.
+Data filenames allow letters, digits, `_`, and one dot. MiniSQL
+encodes DB and table names reversibly: `-` becomes `_`, `_` becomes
+`__`, and any other character becomes `_`. Thus `a-b` and `a_b` map
+to different files.
 
 ---
 
@@ -108,7 +110,7 @@ MiniSQL v0.4.0+ uses the platform's built-in **INDEXED** file system
 
 ### How it works
 
-Each table gets its own ISAM file: `<db>.<table>.idx`
+Each table gets its own ISAM file: `<db>_<table>.idx`
 
 - Records are stored as **associative arrays** (`DIM R{}`)
 - The primary key field is always `"key"`
@@ -121,7 +123,7 @@ Each table gets its own ISAM file: `<db>.<table>.idx`
 ### Schema storage
 
 Table schemas (column list + primary key + auto-inc sequence) are
-stored in the system ISAM table `<db>.schema.idx`, keyed by table name.
+stored in the system ISAM table `<db>_schema.idx`, keyed by table name.
 
 ### No more append-only model
 
@@ -703,7 +705,7 @@ SQL_MODE$ = "AO"
 
 ## Event Logging
 
-MiniSQL maintains an event log at `<db>.log.dat`. It is opened at the
+MiniSQL maintains an event log at `<db>_log.dat`. It is opened at the
 start of every session (file handle #1) and kept open until the session
 ends.
 
@@ -742,7 +744,7 @@ are pre-allocated with defaults.
 
 | Code | Name            | Default  | Description             |
 |------|-----------------|----------|-------------------------|
-| 100  | VERSION         | `0.5.0`  | Database version        |
+| 100  | VERSION         | `0.6.0`  | Database version        |
 | 101  | AUTOCOMPACT     | `0`      | Auto-compact on startup |
 | 102  | MAXREC          | `10000`  | Max records per file    |
 | 103-109 | (reserved)   | `0`      | Future use              |
@@ -866,7 +868,7 @@ Tip: always print both `SQL_STATUS` and `SQL_MSG$`.
    internally.
 
 5. The log file grows unbounded. Periodically clear it by deleting
-   `<db>.log.dat` or running INITDB again (recreates the header).
+   `<db>_log.dat` or running INITDB again (recreates the header).
 
 6. Use ALTER TABLE to evolve schemas without data loss.
 
@@ -912,5 +914,5 @@ MiniSQL is intentionally simple:
 * values cannot safely contain `,` or `|`
 * no JOIN/GROUP BY/subqueries
 * no type enforcement (everything is text)
-* ORDER BY uses string comparison, not numeric
+* WHERE comparisons and ORDER BY use string comparison, not numeric
 * ORDER BY limited to 500 rows in memory
