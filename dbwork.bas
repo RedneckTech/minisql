@@ -25,6 +25,7 @@ START:
     DIM PAGEKEYS$(20)
     DIM RN$(40)
     DIM RV$(40)
+    DIM MAPL$(100)
     GOSUB WB_BOOT
     SCREEN = 1
     WHILE SCREEN <> 0
@@ -32,6 +33,7 @@ START:
         IF SCREEN = 2 THEN GOSUB SCR_TABLES
         IF SCREEN = 3 THEN GOSUB SCR_DESIGN
         IF SCREEN = 4 THEN GOSUB SCR_BROWSE
+        IF SCREEN = 8 THEN GOSUB SCR_MAP
         X = SLEEP(0.25)
     WEND
     END
@@ -515,6 +517,75 @@ WB_DELETEROW:
     RETURN
 
 
+WB_HASCOL:
+    REM IN: HT$, HC$  OUT: HAS (0/1)
+    HAS = 0
+    IF HC$ = "key" THEN
+        FOR TI = 1 TO TBNT
+            IF TBN$(TI) = HT$ THEN HAS = 1
+        NEXT TI
+        RETURN
+    END IF
+    FOR TI = 1 TO TBNT
+        IF TBN$(TI) = HT$ THEN
+            HCOLS$ = TBC$(TI)
+            CI = 1
+            WHILE 1
+                S$ = HCOLS$
+                D$ = ","
+                N = CI
+                GOSUB WB_GETTOK
+                C$ = GETD$
+                IF C$ = "" THEN RETURN
+                IF C$ = HC$ THEN
+                    HAS = 1
+                    RETURN
+                END IF
+                CI = CI + 1
+            WEND
+        END IF
+    NEXT TI
+    RETURN
+
+WB_MAPLINES:
+    MAPN = 0
+    MAPN = MAPN + 1
+    MAPL$(MAPN) = "Database map - DB: " + DB$
+    MAPN = MAPN + 1
+    MAPL$(MAPN) = "Tables: " + TRIM$(STR$(TBNT))
+    MAPL$(MAPN) = MAPL$(MAPN) + "   Links: " + TRIM$(STR$(LNKT))
+    MAPN = MAPN + 1
+    MAPL$(MAPN) = ""
+    FOR TI = 1 TO TBNT
+        MAPN = MAPN + 1
+        MAPL$(MAPN) = "  " + TBN$(TI) + ": " + TBC$(TI)
+    NEXT TI
+    MAPN = MAPN + 1
+    MAPL$(MAPN) = ""
+    MAPN = MAPN + 1
+    MAPL$(MAPN) = "Links:"
+    IF LNKT = 0 THEN
+        MAPN = MAPN + 1
+        MAPL$(MAPN) = "  (none)"
+    ELSE
+        FOR LI = 1 TO LNKT
+            MAPN = MAPN + 1
+            MAPL$(MAPN) = "  " + LNKF$(LI) + "." + LNKFK$(LI)
+            MAPL$(MAPN) = MAPL$(MAPN) + " -> "
+            MAPL$(MAPN) = MAPL$(MAPN) + LNKTT$(LI) + "." + LNKTC$(LI)
+            HT$ = LNKF$(LI)
+            HC$ = LNKFK$(LI)
+            GOSUB WB_HASCOL
+            IF HAS = 0 THEN MAPL$(MAPN) = MAPL$(MAPN) + " !"
+            HT$ = LNKTT$(LI)
+            HC$ = LNKTC$(LI)
+            GOSUB WB_HASCOL
+            IF HAS = 0 THEN MAPL$(MAPN) = MAPL$(MAPN) + " !"
+        NEXT LI
+    END IF
+    RETURN
+
+
 REM ==============================================================
 REM  Link metadata (zzlinks)
 REM ==============================================================
@@ -863,8 +934,7 @@ SCR_TABLES:
         RETURN
     END IF
     IF UCASE$(ANS$) = "M" THEN
-        ERR$ = "MAP IS NOT IMPLEMENTED YET"
-        GOSUB WB_ERR
+        SCREEN = 8
         RETURN
     END IF
     IF UCASE$(ANS$) = "S" THEN
@@ -1597,4 +1667,58 @@ SCR_DELETE:
     END IF
     STATUS$ = "Deleted"
     RNEED = 1
+    RETURN
+
+REM ==============================================================
+REM  Database map
+REM ==============================================================
+SCR_MAP:
+    IF TLOADED = 0 THEN
+        GOSUB WB_LOADTABLES
+        TLOADED = 1
+    END IF
+    IF LLOADED = 0 THEN
+        GOSUB WB_LOADLINKS
+        LLOADED = 1
+    END IF
+    GOSUB WB_MAPLINES
+    MPAGE = 1
+    MOREM = 1
+    WHILE MOREM = 1
+        GOSUB WB_CLS
+        TITLE$ = "MiniSQL Workbench"
+        FOOT$ = "N=next  P=prev  R=refresh  B=back"
+        GOSUB WB_HEADER
+        MP1 = (MPAGE - 1) * 18 + 1
+        MP2 = MP1 + 17
+        IF MP2 > MAPN THEN MP2 = MAPN
+        FOR MI = MP1 TO MP2
+            TEXT$ = MAPL$(MI)
+            GOSUB WB_LINE
+        NEXT MI
+        GOSUB WB_FOOTER
+        PROMPT$ = "Selection: "
+        GOSUB WB_PROMPT
+        IF UCASE$(ANS$) = "B" OR UCASE$(ANS$) = "Q" THEN
+            MOREM = 0
+        ELSEIF UCASE$(ANS$) = "N" THEN
+            IF MP2 < MAPN THEN MPAGE = MPAGE + 1
+        ELSEIF UCASE$(ANS$) = "P" THEN
+            IF MPAGE > 1 THEN MPAGE = MPAGE - 1
+        ELSEIF UCASE$(ANS$) = "R" THEN
+            TLOADED = 0
+            LLOADED = 0
+            GOSUB WB_LOADTABLES
+            TLOADED = 1
+            GOSUB WB_LOADLINKS
+            LLOADED = 1
+            GOSUB WB_MAPLINES
+            MPAGE = 1
+        ELSE
+            ERR$ = "UNKNOWN SELECTION"
+            GOSUB WB_ERR
+        END IF
+        X = SLEEP(0.1)
+    WEND
+    SCREEN = 2
     RETURN

@@ -293,6 +293,18 @@ SCENARIOS["delcancel"] = {
     "final_must": ["k01"],
 }
 
+SCENARIOS["map"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST5_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": ["N", "WBTEST5", "N", "customers", "id,name", "Q",
+               "N", "orders", "id,customer_id,date", "Q",
+               "1", "L", "2", "2", "3", "Q", "M"],
+    "must": ["Database map", "customers", "orders",
+             "customers.id -> orders.customer_id", "Tables: 2", "Links: 1"],
+    "must_not": ["?SYNTAX", "?ILLEGAL"],
+    "final_must": ["Tables: 2", "Links: 1"],
+}
+
 
 def main():
     names = sys.argv[1:] or ["smoke"]
