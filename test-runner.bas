@@ -1,5 +1,5 @@
 REM ==============================================================
-REM  MiniSQL Test Runner  —  runs all test*.bas programs
+REM  MiniSQL Test Runner   -   runs all test*.bas programs
 REM ==============================================================
 START:
 REM  Usage: CHAIN "test-runner.bas"  (or RUN from BASIC)

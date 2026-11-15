@@ -1,5 +1,5 @@
 REM ==============================================================
-REM  test_transactions.bas  —  BEGIN / COMMIT / ROLLBACK
+REM  test_transactions.bas   -   BEGIN / COMMIT / ROLLBACK
 REM ==============================================================
 START:
 COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$

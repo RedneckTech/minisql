@@ -1,5 +1,5 @@
 REM ==============================================================
-REM  test_initdb.bas  —  INITDB / database initialization test
+REM  test_initdb.bas   -   INITDB / database initialization test
 REM ==============================================================
 START:
 COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$

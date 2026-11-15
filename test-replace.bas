@@ -1,5 +1,5 @@
 REM ==============================================================
-REM  test_replace.bas  —  REPLACE (upsert)
+REM  test_replace.bas   -   REPLACE (upsert)
 REM ==============================================================
 START:
 COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$

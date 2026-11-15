@@ -1,5 +1,5 @@
 REM ==============================================================
-REM  test_insert.bas  —  INSERT with auto-increment keys
+REM  test_insert.bas   -   INSERT with auto-increment keys
 REM ==============================================================
 START:
 COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$

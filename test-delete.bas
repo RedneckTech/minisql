@@ -1,5 +1,5 @@
 REM ==============================================================
-REM  test_delete.bas  —  DELETE (KEY-based and bulk WHERE)
+REM  test_delete.bas   -   DELETE (KEY-based and bulk WHERE)
 REM ==============================================================
 START:
 COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$

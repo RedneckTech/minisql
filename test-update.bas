@@ -1,5 +1,5 @@
 REM ==============================================================
-REM  test_update.bas  —  UPDATE (KEY-based, bulk WHERE, multi-col)
+REM  test_update.bas   -   UPDATE (KEY-based, bulk WHERE, multi-col)
 REM ==============================================================
 START:
 COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$

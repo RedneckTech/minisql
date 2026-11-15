@@ -1,5 +1,5 @@
 REM ==============================================================
-REM  test_where.bas  —  Enhanced WHERE (AND/OR, comparisons, LIKE)
+REM  test_where.bas   -   Enhanced WHERE (AND/OR, comparisons, LIKE)
 REM ==============================================================
 START:
 COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$
