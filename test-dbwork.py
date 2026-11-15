@@ -219,6 +219,27 @@ SCENARIOS["dropcancel"] = {
     "final_must": ["DB: WBTEST2"],
 }
 
+SCENARIOS["links"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST3_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": ["N", "WBTEST3", "N", "customers", "id,name", "B",
+               "N", "orders", "id,customer_id,date", "B",
+               "1", "L", "2", "2", "3", "B",
+               "1", "L", "2", "1", "2", "B"],
+    "must": ["customers.id -> orders.customer_id", "customers.id -> customers.id"],
+    "must_not": ["?SYNTAX", "?ILLEGAL"],
+}
+SCENARIOS["linkdrop"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST3B_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": ["N", "WBTEST3B", "N", "customers", "id,name", "B",
+               "N", "orders", "id,customer_id,date", "B",
+               "1", "L", "2", "2", "3", "B",
+               "1", "D", "1", "Y", "B", "1"],
+    "must": ["1 link removed", "Links: (none)"],
+    "must_not": ["?SYNTAX", "?ILLEGAL"],
+}
+
 
 def main():
     names = sys.argv[1:] or ["smoke"]

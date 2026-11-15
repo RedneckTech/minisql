@@ -12,12 +12,21 @@ START:
     DIM COLN$(40)
     DIM RESL$(60)
     DIM NEWC$(40)
+    DIM LNKF$(30)
+    DIM LNKFK$(30)
+    DIM LNKTT$(30)
+    DIM LNKTC$(30)
+    DIM LNKKEY$(30)
+    DIM DLINK$(30)
+    DIM DKEY$(30)
+    DIM TGTCOL$(40)
     GOSUB WB_BOOT
     SCREEN = 1
     WHILE SCREEN <> 0
         IF SCREEN = 1 THEN GOSUB SCR_START
         IF SCREEN = 2 THEN GOSUB SCR_TABLES
         IF SCREEN = 3 THEN GOSUB SCR_DESIGN
+        X = SLEEP(0.25)
     WEND
     END
 
@@ -28,6 +37,7 @@ REM ==============================================================
 WB_BOOT:
     SQL_MODE$ = "RW"
     TLOADED = 0
+    LLOADED = 0
     RNEED = 0
     STATUS$ = ""
     WB_HL$ = ""
@@ -356,6 +366,144 @@ WB_DROPTABLE:
 
 
 REM ==============================================================
+REM  Link metadata (zzlinks)
+REM ==============================================================
+WB_LINKROW:
+    REM IN: ROWL$  OUT: LFT$, LFC$, LTT$, LTC$, LKEY$
+    LFT$ = ""
+    LFC$ = ""
+    LTT$ = ""
+    LTC$ = ""
+    LKEY$ = ""
+    S$ = ROWL$
+    D$ = "|"
+    N = 3
+    GOSUB WB_GETTOK
+    LKEY$ = GETD$
+    FOR LJ = 4 TO 7
+        S$ = ROWL$
+        D$ = "|"
+        N = LJ
+        GOSUB WB_GETTOK
+        LTOK$ = GETD$
+        EQ = INSTR(LTOK$, "=")
+        IF EQ > 0 THEN
+            LN$ = LEFT$(LTOK$, EQ-1)
+            LV$ = MID$(LTOK$, EQ+1)
+            IF LN$ = "ftbl" THEN LFT$ = LV$
+            IF LN$ = "fcol" THEN LFC$ = LV$
+            IF LN$ = "ttbl" THEN LTT$ = LV$
+            IF LN$ = "tcol" THEN LTC$ = LV$
+        END IF
+    NEXT LJ
+    RETURN
+
+WB_LOADLINKS:
+    LNKT = 0
+    SQL_STMT$ = "SELECT * FROM zzlinks"
+    GOSUB WB_EXEC
+    IF SQL_STATUS <> 0 THEN
+        LNKT = 0
+        RETURN
+    END IF
+    GOSUB WB_SPLIT
+    FOR LI = 1 TO RESN
+        IF LNKT < 30 THEN
+            ROWL$ = RESL$(LI)
+            GOSUB WB_LINKROW
+            LNKT = LNKT + 1
+            LNKF$(LNKT) = LFT$
+            LNKFK$(LNKT) = LFC$
+            LNKTT$(LNKT) = LTT$
+            LNKTC$(LNKT) = LTC$
+            LNKKEY$(LNKT) = LKEY$
+        END IF
+    NEXT LI
+    RETURN
+
+WB_SAVELINK:
+    REM IN: LFT$, LFC$, LTT$, LTC$
+    SQL_STMT$ = "INSERT INTO zzlinks VALUES ("
+    SQL_STMT$ = SQL_STMT$ + LFT$ + "," + LFC$ + ","
+    SQL_STMT$ = SQL_STMT$ + LTT$ + "," + LTC$ + ")"
+    IF LEN(SQL_STMT$) > 1800 THEN
+        ERR$ = "STATEMENT TOO LONG"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    GOSUB WB_EXEC
+    RETURN
+
+WB_DELLINK:
+    REM IN: LK$
+    SQL_STMT$ = "DELETE FROM zzlinks KEY " + LK$
+    GOSUB WB_EXEC
+    RETURN
+
+WB_LINKSFOR:
+    DLN = 0
+    FOR LI = 1 TO LNKT
+        IF LNKF$(LI) = TBL$ OR LNKTT$(LI) = TBL$ THEN
+            IF DLN < 30 THEN
+                DLN = DLN + 1
+                IF LNKF$(LI) = TBL$ THEN
+                    DLINK$(DLN) = LNKF$(LI) + "." + LNKFK$(LI)
+                    DLINK$(DLN) = DLINK$(DLN) + " -> "
+                    DLINK$(DLN) = DLINK$(DLN) + LNKTT$(LI)
+                    DLINK$(DLN) = DLINK$(DLN) + "." + LNKTC$(LI)
+                ELSE
+                    DLINK$(DLN) = LNKTT$(LI) + "." + LNKTC$(LI)
+                    DLINK$(DLN) = DLINK$(DLN) + " <- "
+                    DLINK$(DLN) = DLINK$(DLN) + LNKF$(LI)
+                    DLINK$(DLN) = DLINK$(DLN) + "." + LNKFK$(LI)
+                END IF
+                DKEY$(DLN) = LNKKEY$(LI)
+            END IF
+        END IF
+    NEXT LI
+    RETURN
+
+WB_LOADTGT:
+    TGTN = 0
+    CI = 1
+    WHILE 1
+        S$ = TGTCOLS$
+        D$ = ","
+        N = CI
+        GOSUB WB_GETTOK
+        C$ = GETD$
+        IF C$ = "" THEN RETURN
+        IF TGTN < 40 THEN
+            TGTN = TGTN + 1
+            TGTCOL$(TGTN) = C$
+        END IF
+        CI = CI + 1
+    WEND
+    RETURN
+
+WB_CLEANLINKS:
+    REM IN: TBL$, DCOL$ (empty = whole table)
+    CLNDEL = 0
+    GOSUB WB_LOADLINKS
+    FOR LI = 1 TO LNKT
+        DMATCH = 0
+        IF DCOL$ = "" THEN
+            IF LNKF$(LI) = TBL$ OR LNKTT$(LI) = TBL$ THEN DMATCH = 1
+        ELSE
+            IF LNKF$(LI) = TBL$ AND LNKFK$(LI) = DCOL$ THEN DMATCH = 1
+            IF LNKTT$(LI) = TBL$ AND LNKTC$(LI) = DCOL$ THEN DMATCH = 1
+        END IF
+        IF DMATCH = 1 THEN
+            LK$ = LNKKEY$(LI)
+            GOSUB WB_DELLINK
+            IF SQL_STATUS = 0 THEN CLNDEL = CLNDEL + 1
+        END IF
+    NEXT LI
+    LLOADED = 0
+    RETURN
+
+
+REM ==============================================================
 REM  Open/create a database, ensure zzlinks, remember it
 REM ==============================================================
 WB_OPENDB:
@@ -380,6 +528,7 @@ WB_OPENDB:
     TCOLS$ = ""
     TPK$ = "key"
     TLOADED = 0
+    LLOADED = 0
     RNEED = 0
     STATUS$ = ""
     SCREEN = 2
@@ -578,6 +727,7 @@ SCR_TABLES:
         TCOLS$ = TBC$(VAL(ANS$))
         TPK$ = "key"
         STATUS$ = ""
+        LLOADED = 0
         RNEED = 1
         SCREEN = 3
         RETURN
@@ -661,14 +811,101 @@ SCR_NEWTABLE:
     END IF
     TPK$ = "key"
     STATUS$ = ""
-    TLOADED = 0
+    IF TBNT < 50 THEN
+        TBNT = TBNT + 1
+        TBN$(TBNT) = TBL$
+        TBC$(TBNT) = TCOLS$
+    END IF
+    TLOADED = 1
     RNEED = 1
     SCREEN = 3
     RETURN
 
 
 REM ==============================================================
-REM  Table design: columns, row count, add/drop column, drop table
+REM  Add a link from the current table
+REM ==============================================================
+WB_LINKADD:
+    LFT$ = TBL$
+    PRINT "From column:"
+    PRINT "  1  KEY"
+    FOR CI = 1 TO COLNT
+        PRINT "  " + TRIM$(STR$(CI+1)) + "  " + COLN$(CI)
+    NEXT CI
+    PROMPT$ = "From column number: "
+    GOSUB WB_PROMPT
+    FC = VAL(TRIM$(ANS$))
+    IF FC < 1 OR FC > COLNT + 1 THEN
+        ERR$ = "BAD COLUMN NUMBER"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    IF FC = 1 THEN
+        LFC$ = "key"
+    ELSE
+        LFC$ = COLN$(FC-1)
+    END IF
+    PRINT "Target table:"
+    FOR TI = 1 TO TBNT
+        PRINT "  " + TRIM$(STR$(TI)) + "  " + TBN$(TI)
+    NEXT TI
+    PROMPT$ = "Target table number: "
+    GOSUB WB_PROMPT
+    TT = VAL(TRIM$(ANS$))
+    IF TT < 1 OR TT > TBNT THEN
+        ERR$ = "BAD TABLE NUMBER"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    LTT$ = TBN$(TT)
+    TGTCOLS$ = TBC$(TT)
+    GOSUB WB_LOADTGT
+    PRINT "Target column:"
+    PRINT "  1  KEY"
+    FOR CI = 1 TO TGTN
+        PRINT "  " + TRIM$(STR$(CI+1)) + "  " + TGTCOL$(CI)
+    NEXT CI
+    PROMPT$ = "Target column number: "
+    GOSUB WB_PROMPT
+    TC = VAL(TRIM$(ANS$))
+    IF TC < 1 OR TC > TGTN + 1 THEN
+        ERR$ = "BAD COLUMN NUMBER"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    IF TC = 1 THEN
+        LTC$ = "key"
+    ELSE
+        LTC$ = TGTCOL$(TC-1)
+    END IF
+    IF LLOADED = 0 THEN
+        GOSUB WB_LOADLINKS
+        LLOADED = 1
+    END IF
+    DUP = 0
+    FOR LI = 1 TO LNKT
+        IF LNKF$(LI) = LFT$ AND LNKFK$(LI) = LFC$ THEN
+            IF LNKTT$(LI) = LTT$ AND LNKTC$(LI) = LTC$ THEN DUP = 1
+        END IF
+    NEXT LI
+    IF DUP = 1 THEN
+        ERR$ = "LINK EXISTS"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    GOSUB WB_SAVELINK
+    IF SQL_STATUS <> 0 THEN
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
+    ELSE
+        STATUS$ = "Linked"
+        LLOADED = 0
+    END IF
+    RETURN
+
+
+REM ==============================================================
+REM  Table design: columns, links, add/drop column, drop table
 REM ==============================================================
 SCR_DESIGN:
     IF RNEED = 1 THEN
@@ -676,16 +913,28 @@ SCR_DESIGN:
         RNEED = 0
     END IF
     GOSUB WB_LOADCOLS
+    IF LLOADED = 0 THEN
+        GOSUB WB_LOADLINKS
+        LLOADED = 1
+    END IF
+    GOSUB WB_LINKSFOR
     GOSUB WB_CLS
     TITLE$ = "MiniSQL Workbench"
-    FOOT$ = "A=add column   D n=drop   T=drop table   B=back"
+    FOOT$ = "A=add  D n=drop  L=link  X n=unlink  T=drop  B=back"
     GOSUB WB_HEADER
     TEXT$ = "  Table: " + TBL$
     GOSUB WB_LINE
     TEXT$ = "  KEY: " + TPK$ + "    Rows: " + TRIM$(STR$(ROWS))
     GOSUB WB_LINE
-    TEXT$ = "  Links: (none)"
-    GOSUB WB_LINE
+    IF DLN = 0 THEN
+        TEXT$ = "  Links: (none)"
+        GOSUB WB_LINE
+    ELSE
+        FOR LI = 1 TO DLN
+            TEXT$ = "  " + TRIM$(STR$(LI)) + "  " + DLINK$(LI)
+            GOSUB WB_LINE
+        NEXT LI
+    END IF
     TEXT$ = "  " + STATUS$
     GOSUB WB_LINE
     TEXT$ = ""
@@ -785,7 +1034,13 @@ SCR_DESIGN:
                     END IF
                 NEXT CI
                 TCOLS$ = NEWCOLS$
+                GOSUB WB_CLEANLINKS
                 STATUS$ = "Dropped " + DCOL$
+                IF CLNDEL > 0 THEN
+                    STATUS$ = STATUS$ + " ("
+                    STATUS$ = STATUS$ + TRIM$(STR$(CLNDEL))
+                    STATUS$ = STATUS$ + " link removed)"
+                END IF
                 TLOADED = 0
             END IF
         END IF
@@ -803,9 +1058,35 @@ SCR_DESIGN:
             ERR$ = SQL_MSG$
             GOSUB WB_ERR
         ELSE
+            DCOL$ = ""
+            GOSUB WB_CLEANLINKS
             STATUS$ = ""
             TLOADED = 0
             SCREEN = 2
+        END IF
+        RETURN
+    END IF
+    IF UCASE$(ANS$) = "L" THEN
+        GOSUB WB_LINKADD
+        RETURN
+    END IF
+    IF UCASE$(ANS$) = "X" THEN
+        PROMPT$ = "Link number: "
+        GOSUB WB_PROMPT
+        XN = VAL(TRIM$(ANS$))
+        IF XN < 1 OR XN > DLN THEN
+            ERR$ = "BAD LINK NUMBER"
+            GOSUB WB_ERR
+            RETURN
+        END IF
+        LK$ = DKEY$(XN)
+        GOSUB WB_DELLINK
+        IF SQL_STATUS <> 0 THEN
+            ERR$ = SQL_MSG$
+            GOSUB WB_ERR
+        ELSE
+            STATUS$ = "Unlinked"
+            LLOADED = 0
         END IF
         RETURN
     END IF
