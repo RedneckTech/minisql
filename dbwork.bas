@@ -34,6 +34,7 @@ START:
         IF SCREEN = 3 THEN GOSUB SCR_DESIGN
         IF SCREEN = 4 THEN GOSUB SCR_BROWSE
         IF SCREEN = 8 THEN GOSUB SCR_MAP
+        IF SCREEN = 9 THEN GOSUB SCR_SQL
         X = SLEEP(0.25)
     WEND
     END
@@ -938,8 +939,7 @@ SCR_TABLES:
         RETURN
     END IF
     IF UCASE$(ANS$) = "S" THEN
-        ERR$ = "SQL CONSOLE IS NOT IMPLEMENTED YET"
-        GOSUB WB_ERR
+        SCREEN = 9
         RETURN
     END IF
     IF VAL(ANS$) >= 1 AND VAL(ANS$) <= TBNT THEN
@@ -1717,6 +1717,74 @@ SCR_MAP:
         ELSE
             ERR$ = "UNKNOWN SELECTION"
             GOSUB WB_ERR
+        END IF
+        X = SLEEP(0.1)
+    WEND
+    SCREEN = 2
+    RETURN
+
+REM ==============================================================
+REM  SQL console
+REM ==============================================================
+WB_SHOWDESC:
+    GOSUB WB_PARSEDESC
+    PRINT "TBL="; DTBL$
+    PRINT "COLS="; DCOLS$
+    PRINT "PK="; DPK$
+    RETURN
+
+WB_SHOWRESULT:
+    GOSUB WB_SPLIT
+    SL = 0
+    FOR SI = 1 TO RESN
+        PRINT RESL$(SI)
+        SL = SL + 1
+        IF SL >= 20 THEN
+            INPUT "Press ENTER...", X$
+            SL = 0
+        END IF
+    NEXT SI
+    RETURN
+
+SCR_SQL:
+    MORES = 1
+    WHILE MORES = 1
+        GOSUB WB_CLS
+        TITLE$ = "MiniSQL Workbench"
+        FOOT$ = "Empty or B = back"
+        GOSUB WB_HEADER
+        TEXT$ = "  DB: " + DB$
+        GOSUB WB_LINE
+        TEXT$ = "  SQL console"
+        GOSUB WB_LINE
+        TEXT$ = ""
+        GOSUB WB_LINE
+        GOSUB WB_FOOTER
+        PROMPT$ = "SQL> "
+        GOSUB WB_PROMPT
+        IF ANS$ = "" OR UCASE$(ANS$) = "B" THEN
+            MORES = 0
+        ELSE
+            SQL_STMT$ = ANS$
+            U$ = UCASE$(ANS$)
+            IF INSTR(U$, "ZZLINKS") > 0 OR INSTR(U$, "_SCHEMA_META") > 0 THEN
+                PRINT "RESERVED" COLOR RED
+                INPUT "Press ENTER...", X$
+            ELSE
+                GOSUB WB_EXEC
+                PRINT "STATUS: "; SQL_STATUS
+                PRINT SQL_MSG$
+                IF SQL_STATUS = 0 THEN
+                    IF LEFT$(SQL_RESULT$, 6) = "COUNT=" THEN
+                        PRINT SQL_RESULT$
+                    ELSEIF LEFT$(SQL_RESULT$, 4) = "TBL=" THEN
+                        GOSUB WB_SHOWDESC
+                    ELSEIF SQL_RESULT$ <> "" THEN
+                        GOSUB WB_SHOWRESULT
+                    END IF
+                END IF
+                INPUT "Press ENTER...", X$
+            END IF
         END IF
         X = SLEEP(0.1)
     WEND

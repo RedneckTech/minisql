@@ -305,6 +305,23 @@ SCENARIOS["map"] = {
     "final_must": ["Tables: 2", "Links: 1"],
 }
 
+SCENARIOS["sql"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST4_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "step_wait": 7.0,
+    "inputs": ["N", "WBTEST4", "N", "items", "label,val",
+               "I", "", "alpha", "100", "Q",
+               "S",
+               "SELECT COUNT(*) FROM items", "",
+               "DESCRIBE items", "",
+               "SHOW TABLES", "",
+               "DROP TABLE zzlinks", "",
+               "FOO", "",
+               "B"],
+    "must": ["COUNT=1", "COLS=label,val", "items", "zzlinks", "RESERVED", "UNSUPPORTED SQL"],
+    "must_not": ["?SYNTAX", "?ILLEGAL"],
+}
+
 
 def main():
     names = sys.argv[1:] or ["smoke"]
