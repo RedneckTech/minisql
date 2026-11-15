@@ -1,15 +1,16 @@
 REM ==============================================================
-REM  MINISQL.BAS  v0.5.0  (LABEL-BASED / CHAINABLE)
+REM  MINISQL.BAS  v0.6.0  (LABEL-BASED / CHAINABLE)
 REM --------------------------------------------------------------
 REM  ISAM-based SQL engine for 3270BBS.
 REM  Uses the platform's built-in INDEXED file system as the
 REM  storage foundation instead of custom flat-file management.
 REM
-REM  FILENAMES:
-REM    <db>.<table>.idx   - ISAM file per user table
-REM    <db>.schema.idx    - ISAM system table for schemas
-REM    <db>.log.dat        - event log (file handle #1, always open)
-REM    batch.dat           - transaction batch queue
+REM  FILENAMES (data names: letters/digits/'_', ONE dot only):
+REM    <db>_<table>.idx   - ISAM file per user table
+REM    <db>_schema.idx    - ISAM system table for schemas
+REM    <db>_log.dat       - event log (file handle #1, always open)
+REM    batch.dat          - transaction batch queue
+REM    Filename encoding: '-' -> '_', '_' -> '__' (reversible).
 REM
 REM  FILE HANDLES:
 REM    #1 - log file (kept open during session)
@@ -73,59 +74,92 @@ START:
 
 
 REM ==============================================================
-REM  Helpers: sanitize DB name ( '_' -> '-' )
+REM  Helpers: sanitize DB name for use in a data filename
+REM  Data filenames allow letters, digits and '_' and ONE dot.
+REM  Any other character is converted to '_'.
 REM ==============================================================
 SanitizeDB:
-    DBPFX$ = ""
-    FOR J = 1 TO LEN(SQL_DB$)
-        C$ = MID$(SQL_DB$, J, 1)
-        IF C$ = "_" THEN C$ = "-"
-        DBPFX$ = DBPFX$ + C$
+    IN$ = SQL_DB$
+    GOSUB EscName
+    DBPFX$ = ESC$
+    IF DBPFX$ = "" THEN DBPFX$ = "DB"
+    RETURN
+
+
+REM ==============================================================
+REM  Reversible filename encoding
+REM  Data filenames allow letters, digits and '_' only.
+REM  '_' -> '__' and '-' -> '_' so a-b and a_b cannot collide.
+REM  Any other character maps to '_'.
+REM ==============================================================
+EscName:
+    REM IN: IN$  OUT: ESC$
+    ESC$ = ""
+    FOR J = 1 TO LEN(IN$)
+        C$ = MID$(IN$, J, 1)
+        IF C$ = "_" THEN
+            ESC$ = ESC$ + "__"
+        ELSEIF C$ = "-" THEN
+            ESC$ = ESC$ + "_"
+        ELSEIF C$ >= "0" AND C$ <= "9" THEN
+            ESC$ = ESC$ + C$
+        ELSEIF UCASE$(C$) >= "A" AND UCASE$(C$) <= "Z" THEN
+            ESC$ = ESC$ + C$
+        ELSE
+            ESC$ = ESC$ + "_"
+        END IF
     NEXT J
     RETURN
 
 
 REM ==============================================================
 REM  Init/Open log file and read options header
+REM  The log file is created with APPEND first: FOR INPUT on a
+REM  missing file is a runtime error on this interpreter.
 REM ==============================================================
 InitLog:
-    LOGF$ = DBPFX$ + ".log.dat"
+    LOGF$ = DBPFX$ + "_log.dat"
     BATF$ = "batch.dat"
-    SYSF$ = DBPFX$ + ".schema.idx"
+    SYSF$ = DBPFX$ + "_schema.idx"
 
     DIM OPT{}
-    OPT{"100"} = "0.5.0"
+    OPT{"100"} = "0.6.0"
     OPT{"101"} = "0"
     OPT{"102"} = "10000"
     FOR I = 103 TO 109
-        OPT{STR$(I)} = "0"
+        OPT{TRIM$(STR$(I))} = "0"
     NEXT I
     OPT{"200"} = "1"
     OPT{"201"} = "1"
     FOR I = 202 TO 209
-        OPT{STR$(I)} = "0"
+        OPT{TRIM$(STR$(I))} = "0"
     NEXT I
     OPT{"300"} = "1"
     OPT{"301"} = "100"
     FOR I = 302 TO 309
-        OPT{STR$(I)} = "0"
+        OPT{TRIM$(STR$(I))} = "0"
     NEXT I
 
+    OPEN LOGF$ FOR APPEND AS #1
+    CLOSE #1
     OPEN LOGF$ FOR INPUT AS #1
     IF EOF(1) THEN
         CLOSE #1
-        OPEN LOGF$ FOR OUTPUT AS #1
+        OPEN LOGF$ FOR APPEND AS #1
         HDR$ = "HDR|" + DBPFX$ + "|" + OPT{"100"} + "|"
         PRINT #1, HDR$ + DATE$() + "T" + TIME$()
         PRINT #1, "OPT|100|" + OPT{"100"}
         FOR I = 101 TO 109
-            PRINT #1, "OPT|" + STR$(I) + "|" + OPT{STR$(I)}
+            K$ = TRIM$(STR$(I))
+            PRINT #1, "OPT|" + K$ + "|" + OPT{K$}
         NEXT I
         FOR I = 200 TO 209
-            PRINT #1, "OPT|" + STR$(I) + "|" + OPT{STR$(I)}
+            K$ = TRIM$(STR$(I))
+            PRINT #1, "OPT|" + K$ + "|" + OPT{K$}
         NEXT I
         FOR I = 300 TO 309
-            PRINT #1, "OPT|" + STR$(I) + "|" + OPT{STR$(I)}
+            K$ = TRIM$(STR$(I))
+            PRINT #1, "OPT|" + K$ + "|" + OPT{K$}
         NEXT I
         LBL$ = "OPEN"
         MSG$ = "Log created for database " + DBPFX$
@@ -140,7 +174,7 @@ InitLog:
             REST$ = MID$(L$, 5)
             P = INSTR(REST$, "|")
             IF P > 0 THEN
-                K$ = LEFT$(REST$, P-1)
+                K$ = TRIM$(LEFT$(REST$, P-1))
                 V$ = MID$(REST$, P+1)
                 OPT{K$} = V$
             END IF
@@ -181,12 +215,13 @@ InitDB:
     RETURN
 
 EnsureSchemaTable:
-    OPEN SYSF$ FOR INPUT AS #2
+    OPEN SYSF$ FOR APPEND AS #2
     CLOSE #2
     OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     S{"name"} = "_schema_meta"
     S{"value"} = "v1"
+    S{"seq"} = "0"
     PUT #2, S{}
     CLOSE #2
     RETURN
@@ -200,36 +235,38 @@ GetSchema:
     COLS$ = ""
     PK$ = ""
     SEQ = 0
+    OPEN SYSF$ FOR APPEND AS #2
+    CLOSE #2
     OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     GET #2, S{}, KEY = TBL$
     IF FOUND(2) THEN
         COLS$ = S{"cols"}
         PK$ = S{"pk"}
-        IF S{"seq"} <> "" THEN SEQ = VAL(S{"seq"})
+        SEQ = VAL(S{"seq"})
     END IF
     CLOSE #2
     RETURN
 
 PutSchema:
-    REM IN: TBL$, COLS$, PK$  (SEQ optional, default 1)
+    REM IN: TBL$, COLS$, PK$, NEWSEQ
     OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     S{"name"} = TBL$
     S{"cols"} = COLS$
     S{"pk"} = PK$
-    S{"seq"} = "1"
+    S{"seq"} = TRIM$(STR$(NEWSEQ))
     PUT #2, S{}
     CLOSE #2
     RETURN
 
 UpdateSeq:
-    REM IN: TBL$, new SEQ value
+    REM IN: TBL$, SEQ (new sequence value)
     OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
     DIM S{}
     GET #2, S{}, KEY = TBL$
     IF FOUND(2) THEN
-        S{"seq"} = STR$(SEQ)
+        S{"seq"} = TRIM$(STR$(SEQ))
         PUT #2, S{}
     END IF
     CLOSE #2
@@ -248,17 +285,74 @@ REM  Table file helpers
 REM ==============================================================
 GetTableF:
     REM IN: TBL$  OUT: TF$
-    TF$ = DBPFX$ + "." + TBL$ + ".idx"
+    IN$ = TBL$
+    GOSUB EscName
+    TF$ = DBPFX$ + "_" + ESC$ + ".idx"
     RETURN
 
-OpenTableISAM:
-    REM IN: TBL$  Uses #3
-    GOSUB GetTableF
-    OPEN TF$ FOR INDEXED AS #3 KEY = "key"
+CheckTbl:
+    REM IN: TBL$  OUT: BADNAME (0=ok 1=bad)
+    REM Letters, digits, '-' and '_' only; total name <= 32 chars
+    BADNAME = 0
+    IF TBL$ = "" THEN BADNAME = 1
+    IF BADNAME = 0 THEN
+        IN$ = TBL$
+        GOSUB EscName
+        IF LEN(DBPFX$) + LEN(ESC$) + 5 > 32 THEN BADNAME = 1
+    END IF
+    IF BADNAME = 0 THEN
+        FOR TJ = 1 TO LEN(TBL$)
+            TC$ = MID$(TBL$, TJ, 1)
+            TV = 0
+            IF TC$ = "-" OR TC$ = "_" THEN TV = 1
+            IF TC$ >= "0" AND TC$ <= "9" THEN TV = 1
+            IF UCASE$(TC$) >= "A" AND UCASE$(TC$) <= "Z" THEN TV = 1
+            IF TV = 0 THEN BADNAME = 1
+        NEXT TJ
+    END IF
     RETURN
 
-CloseTableISAM:
-    CLOSE #3
+BadName:
+    SQL_STATUS = 13
+    SQL_MSG$ = "BAD TABLE NAME"
+    RETURN
+
+CheckCol:
+    REM IN: C$  OUT: BADCOL (0=ok 1=bad)
+    REM Letters, digits, '-' and '_' only; 'key' is reserved.
+    BADCOL = 0
+    IF C$ = "" THEN BADCOL = 1
+    IF LCASE$(C$) = "key" THEN BADCOL = 1
+    IF BADCOL = 0 THEN
+        FOR CJ = 1 TO LEN(C$)
+            CC$ = MID$(C$, CJ, 1)
+            CV = 0
+            IF CC$ = "-" OR CC$ = "_" THEN CV = 1
+            IF CC$ >= "0" AND CC$ <= "9" THEN CV = 1
+            IF UCASE$(CC$) >= "A" AND UCASE$(CC$) <= "Z" THEN CV = 1
+            IF CV = 0 THEN BADCOL = 1
+        NEXT CJ
+    END IF
+    RETURN
+
+BadAlter:
+    SQL_STATUS = 87
+    SQL_MSG$ = "BAD ALTER"
+    RETURN
+
+NormList:
+    REM IN: L$  OUT: NL$ (lowercased comma-separated list)
+    NL$ = ""
+    CI = 1
+    WHILE 1
+        S$ = L$: D$ = ",": N = CI: GOSUB GetToken
+        C$ = GETD$
+        IF C$ = "" THEN GOTO NLX
+        IF NL$ <> "" THEN NL$ = NL$ + ","
+        NL$ = NL$ + LCASE$(C$)
+        CI = CI + 1
+    WEND
+NLX:
     RETURN
 
 
@@ -271,7 +365,30 @@ ExecSQL:
 
     UP$ = UCASE$(ST$)
 
+    REM Mode checks run BEFORE the transaction queue check so a
+    REM disallowed write cannot be queued and later committed as RW.
+    IF SQL_MODE$ = "RO" THEN
+        IF LEFT$(UP$, 6) <> "SELECT" THEN
+            SQL_STATUS=20: SQL_MSG$="READ-ONLY MODE"
+            LBL$ = "WARNING"
+            MSG$ = "Write denied in RO mode"
+            GOSUB LogEvent
+            RETURN
+        END IF
+    END IF
+    IF SQL_MODE$ = "AO" THEN
+        IF LEFT$(UP$, 6) <> "INSERT" THEN
+            SQL_STATUS=21: SQL_MSG$="APPEND-ONLY MODE"
+            LBL$ = "WARNING"
+            MSG$ = "Non-INSERT denied in AO mode"
+            GOSUB LogEvent
+            RETURN
+        END IF
+    END IF
+
     IF OPT{"300"} = "1" THEN
+        OPEN BATF$ FOR APPEND AS #4
+        CLOSE #4
         OPEN BATF$ FOR INPUT AS #4
         IF NOT EOF(4) THEN
             INPUT #4, L$
@@ -293,25 +410,6 @@ ExecSQL:
         END IF
     END IF
 
-    IF SQL_MODE$ = "RO" THEN
-        IF LEFT$(UP$, 6) <> "SELECT" THEN
-            SQL_STATUS=20: SQL_MSG$="READ-ONLY MODE"
-            LBL$ = "WARNING"
-            MSG$ = "Write denied in RO mode"
-            GOSUB LogEvent
-            RETURN
-        END IF
-    END IF
-    IF SQL_MODE$ = "AO" THEN
-        IF LEFT$(UP$, 6) <> "INSERT" THEN
-            SQL_STATUS=21: SQL_MSG$="APPEND-ONLY MODE"
-            LBL$ = "WARNING"
-            MSG$ = "Non-INSERT denied in AO mode"
-            GOSUB LogEvent
-            RETURN
-        END IF
-    END IF
-
     IF LEFT$(UP$, 12) = "CREATE TABLE" THEN GOSUB DoCreate: RETURN
     IF LEFT$(UP$, 6) = "INSERT" THEN GOSUB DoInsert: RETURN
     IF LEFT$(UP$, 6) = "SELECT" THEN GOSUB DoSelect: RETURN
@@ -321,7 +419,7 @@ ExecSQL:
     IF LEFT$(UP$, 4) = "DROP" THEN GOSUB DoDrop: RETURN
     IF LEFT$(UP$, 4) = "SHOW" THEN GOSUB DoShow: RETURN
     IF LEFT$(UP$, 8) = "DESCRIBE" THEN GOSUB DoDescribe: RETURN
-    IF LEFT$(UP$, 12) = "ALTER TABLE" THEN GOSUB DoAlter: RETURN
+    IF LEFT$(UP$, 11) = "ALTER TABLE" THEN GOSUB DoAlter: RETURN
 
     SQL_STATUS = 12
     SQL_MSG$ = "UNSUPPORTED SQL"
@@ -338,8 +436,10 @@ DoCreate:
 
     SP = INSTR(TMP$, " ")
     IF SP = 0 THEN SQL_STATUS=31: SQL_MSG$="BAD CREATE": RETURN
-    TBL$ = TRIM$(LEFT$(TMP$, SP-1))
+    TBL$ = LCASE$(TRIM$(LEFT$(TMP$, SP-1)))
     REST$ = TRIM$(MID$(TMP$, SP+1))
+    GOSUB CheckTbl
+    IF BADNAME = 1 THEN GOSUB BadName: RETURN
 
     GOSUB GetSchema
     IF COLS$ <> "" THEN SQL_STATUS=33: SQL_MSG$="TABLE EXISTS": RETURN
@@ -350,12 +450,35 @@ DoCreate:
         SQL_STATUS=32: SQL_MSG$="BAD COL LIST"
         RETURN
     END IF
-    COLS$ = TRIM$(MID$(REST$, OP+1, CP-OP-1))
+    L$ = TRIM$(MID$(REST$, OP+1, CP-OP-1))
+    GOSUB NormList
+    COLS$ = NL$
+    IF COLS$ = "" THEN SQL_STATUS=32: SQL_MSG$="BAD COL LIST": RETURN
+
+    REM "key" is the reserved ISAM key field name
+    CI = 1
+    MORECOL = 1
+    WHILE MORECOL = 1
+        S$ = COLS$: D$ = ",": N = CI: GOSUB GetToken
+        C$ = GETD$
+        IF C$ = "" THEN
+            MORECOL = 0
+        ELSE
+            GOSUB CheckCol
+            IF BADCOL = 1 THEN
+                SQL_STATUS = 32
+                SQL_MSG$ = "BAD COLUMN NAME"
+                RETURN
+            END IF
+            CI = CI + 1
+        END IF
+    WEND
 
     PK$ = "key"
-    PPK = INSTR(UCASE$(REST$), "PK")
+    RTAIL$ = TRIM$(MID$(REST$, CP+1))
+    PPK = INSTR(UCASE$(RTAIL$), "PK")
     IF PPK > 0 THEN
-        PK$ = TRIM$(MID$(REST$, PPK+2))
+        PK$ = LCASE$(TRIM$(MID$(RTAIL$, PPK+2)))
         IF PK$ = "" THEN PK$ = "key"
     END IF
 
@@ -363,6 +486,7 @@ DoCreate:
     OPEN TF$ FOR OUTPUT AS #3
     CLOSE #3
 
+    NEWSEQ = 0
     GOSUB PutSchema
     LBL$ = "UPDATED": MSG$ = "TABLE CREATED " + TBL$: GOSUB LogEvent
     SQL_MSG$ = "TABLE CREATED: " + TBL$
@@ -371,7 +495,7 @@ DoCreate:
 
 REM ==============================================================
 REM  INSERT INTO t [KEY k|*] VALUES (v1,v2,...)
-REM  KEY optional — omitting or using KEY * auto-generates a
+REM  KEY optional - omitting or using KEY * auto-generates a
 REM  numeric key from the table's sequence counter.
 REM ==============================================================
 DoInsert:
@@ -381,54 +505,63 @@ DoInsert:
 
     SP = INSTR(TMP$, " ")
     IF SP = 0 THEN SQL_STATUS=41: SQL_MSG$="BAD INSERT": RETURN
-    TBL$ = TRIM$(LEFT$(TMP$, SP-1))
+    TBL$ = LCASE$(TRIM$(LEFT$(TMP$, SP-1)))
     REST$ = TRIM$(MID$(TMP$, SP+1))
+    GOSUB CheckTbl
+    IF BADNAME = 1 THEN GOSUB BadName: RETURN
 
     GOSUB GetSchema
     IF COLS$ = "" THEN SQL_STATUS=46: SQL_MSG$="NO SUCH TABLE": RETURN
 
-    PKPOS = INSTR(UCASE$(REST$), "KEY")
-    IF PKPOS = 0 THEN
-        AUTO = 1
-        REST2$ = REST$
-    ELSE
-        TMP2$ = TRIM$(MID$(REST$, PKPOS+3))
-        SP2 = INSTR(TMP2$, " ")
-        IF SP2 = 0 THEN
-            SQL_STATUS=43: SQL_MSG$="INSERT REQUIRES VALUES"
+    VPOS = INSTR(UCASE$(REST$), "VALUES")
+    IF VPOS = 0 THEN
+        SQL_STATUS=44: SQL_MSG$="INSERT REQUIRES VALUES"
+        RETURN
+    END IF
+    PRE$ = TRIM$(LEFT$(REST$, VPOS-1))
+    AUTO = 1
+    KVAL$ = ""
+    IF LEFT$(UCASE$(PRE$), 4) = "KEY " THEN
+        KVAL$ = TRIM$(MID$(PRE$, 4))
+        IF KVAL$ = "" THEN
+            SQL_STATUS=43: SQL_MSG$="BAD KEY"
             RETURN
         END IF
-        KEY$ = TRIM$(LEFT$(TMP2$, SP2-1))
-        IF KEY$ = "*" THEN
-            AUTO = 1
-        ELSE
-            AUTO = 0
-        END IF
-        REST2$ = TRIM$(MID$(TMP2$, SP2+1))
+        IF KVAL$ = "*" THEN AUTO = 1 ELSE AUTO = 0
+    ELSEIF PRE$ <> "" THEN
+        SQL_STATUS=41: SQL_MSG$="BAD INSERT"
+        RETURN
     END IF
 
     IF AUTO = 1 THEN
+AutoKey:
         SEQ = SEQ + 1
-        KEY$ = STR$(SEQ)
-        GOSUB UpdateSeq
-    ELSE
-        TF$ = DBPFX$ + "." + TBL$ + ".idx"
+        KVAL$ = TRIM$(STR$(SEQ))
+        GOSUB GetTableF
         OPEN TF$ FOR INDEXED AS #3 KEY = "key"
         DIM D{}
-        GET #3, D{}, KEY = KEY$
+        GET #3, D{}, KEY = KVAL$
+        KFND = FOUND(3)
         CLOSE #3
-        IF FOUND(3) THEN
+        IF KFND = 1 THEN
+            WC = SEQ: GOSUB Watchdog
+            GOTO AutoKey
+        END IF
+        GOSUB UpdateSeq
+    ELSE
+        GOSUB GetTableF
+        OPEN TF$ FOR INDEXED AS #3 KEY = "key"
+        DIM D{}
+        GET #3, D{}, KEY = KVAL$
+        KFND = FOUND(3)
+        CLOSE #3
+        IF KFND = 1 THEN
             SQL_STATUS=47: SQL_MSG$="DUPLICATE KEY"
             RETURN
         END IF
     END IF
 
-    VPOS = INSTR(UCASE$(REST2$), "VALUES")
-    IF VPOS = 0 THEN
-        SQL_STATUS=44: SQL_MSG$="INSERT REQUIRES VALUES"
-        RETURN
-    END IF
-    VSTR$ = TRIM$(MID$(REST2$, VPOS+6))
+    VSTR$ = TRIM$(MID$(REST$, VPOS+6))
     OP = INSTR(VSTR$, "("): CP = INSTR(VSTR$, ")")
     IF OP=0 OR CP=0 OR CP<OP THEN
         SQL_STATUS=45: SQL_MSG$="BAD VALUES"
@@ -437,17 +570,17 @@ DoInsert:
     VALS$ = TRIM$(MID$(VSTR$, OP+1, CP-OP-1))
 
     GOSUB AppendRecord
-    SQL_MSG$ = "INSERTED " + TBL$ + " KEY " + KEY$
+    SQL_MSG$ = "INSERTED " + TBL$ + " KEY " + KVAL$
     RETURN
 
 
 REM ==============================================================
 REM  Append a record using ISAM PUT
-REM  IN: TBL$, COLS$, KEY$, VALS$
+REM  IN: TBL$, COLS$, KVAL$, VALS$
 REM ==============================================================
 AppendRecord:
     STEMP$ = TBL$
-    KTEMP$ = KEY$
+    KTEMP$ = KVAL$
     CTEMP$ = COLS$
     VTEMP$ = VALS$
     DIM R{}
@@ -456,17 +589,19 @@ AppendRecord:
     WHILE 1
         S$ = CTEMP$: D$ = ",": N = CI: GOSUB GetToken
         COL$ = GETD$
-        IF COL$ = "" THEN EXIT WHILE
+        IF COL$ = "" THEN GOTO ARX
         S$ = VTEMP$: D$ = ",": N = CI: GOSUB GetToken
         VV$ = GETD$
         R{COL$} = VV$
         CI = CI + 1
     WEND
+ARX:
 
-    TF$ = DBPFX$ + "." + STEMP$ + ".idx"
+    GOSUB GetTableF
     OPEN TF$ FOR INDEXED AS #3 KEY = "key"
     PUT #3, R{}
     CLOSE #3
+
     LBL$ = "APPENDED"
     MSG$ = "INSERT " + STEMP$ + " KEY " + KTEMP$
     GOSUB LogEvent
@@ -474,12 +609,12 @@ AppendRecord:
 
 
 REM ==============================================================
-REM  SELECT * FROM t [WHERE KEY=val | WHERE col=val]
-REM                  [ORDER BY col [ASC|DESC]] [LIMIT n]
+REM  SELECT * FROM t [WHERE KEY=val | WHERE cond]
+REM          [ORDER BY col [ASC|DESC]] [LIMIT n]
 REM ==============================================================
 DoSelect:
     SQL_RESULT$ = ""
-    LIMIT = 0
+    LIMIT = -1
     SELALL = 1
     HASDIST = 0
     SELCOLS$ = ""
@@ -500,22 +635,42 @@ DoSelect:
         END IF
         IF SELTMP$ <> "" AND SELTMP$ <> "*" THEN
             SELALL = 0
-            SELCOLS$ = SELTMP$
+            L$ = SELTMP$
+            GOSUB NormList
+            SELCOLS$ = NL$
         END IF
     END IF
 
     TMP$ = TRIM$(MID$(ST$, PF+4))
     SP = INSTR(TMP$, " ")
     IF SP = 0 THEN
-        TBL$ = TRIM$(TMP$)
+        TBL$ = LCASE$(TRIM$(TMP$))
         REST$ = ""
     ELSE
-        TBL$ = TRIM$(LEFT$(TMP$, SP-1))
+        TBL$ = LCASE$(TRIM$(LEFT$(TMP$, SP-1)))
         REST$ = TRIM$(MID$(TMP$, SP+1))
     END IF
+    GOSUB CheckTbl
+    IF BADNAME = 1 THEN GOSUB BadName: RETURN
 
     GOSUB GetSchema
     IF COLS$ = "" THEN SQL_STATUS=51: SQL_MSG$="NO SUCH TABLE": RETURN
+
+    IF SELALL = 0 THEN
+        SCI = 1
+        WHILE 1
+            S$ = SELCOLS$: D$ = ",": N = SCI: GOSUB GetToken
+            C$ = GETD$
+            IF C$ = "" THEN GOTO DSVX
+            COL$ = C$: GOSUB ValidateCol
+            IF VALID = 0 THEN
+                SQL_STATUS=52: SQL_MSG$="BAD SELECT COL"
+                RETURN
+            END IF
+            SCI = SCI + 1
+        WEND
+DSVX:
+    END IF
 
     W$ = ""
     WHEREKEY = 0
@@ -527,14 +682,18 @@ DoSelect:
     PL = INSTR(UCASE$(REST$), "LIMIT")
 
     IF PW > 0 THEN
-        WEND$ = LEN(REST$) + 1
-        IF PO > 0 AND PO > PW THEN WEND$ = PO
-        IF PL > 0 AND PL > PW AND PL < WEND$ THEN WEND$ = PL
-        W$ = TRIM$(MID$(REST$, PW+5, WEND$-PW-5))
+        WENDX = LEN(REST$) + 1
+        IF PO > 0 AND PO > PW THEN WENDX = PO
+        IF PL > 0 AND PL > PW AND PL < WENDX THEN WENDX = PL
+        W$ = TRIM$(MID$(REST$, PW+5, WENDX-PW-5))
 
         WU$ = UCASE$(W$)
         IF LEFT$(WU$, 4) = "KEY=" THEN WHEREKEY = 1
         IF LEFT$(WU$, 5) = "KEY =" THEN WHEREKEY = 1
+        IF WHEREKEY = 1 THEN
+            IF INSTR(WU$, " AND ") > 0 THEN WHEREKEY = 0
+            IF INSTR(WU$, " OR ") > 0 THEN WHEREKEY = 0
+        END IF
         IF WHEREKEY = 1 THEN
             EQ = INSTR(W$, "=")
             WKEYVAL$ = TRIM$(MID$(W$, EQ+1))
@@ -551,10 +710,10 @@ DoSelect:
             ODIR$ = "ASC"
         ELSE
             OCOL$ = TRIM$(LEFT$(OCLAUSE$, OSP-1))
-            ODIR$ = TRIM$(MID$(OCLAUSE$, OSP+1))
-            ODIR$ = UCASE$(ODIR$)
+            ODIR$ = UCASE$(TRIM$(MID$(OCLAUSE$, OSP+1)))
             IF ODIR$ <> "DESC" THEN ODIR$ = "ASC"
         END IF
+        OCOL$ = LCASE$(OCOL$)
     END IF
 
     IF PL > 0 THEN
@@ -562,12 +721,27 @@ DoSelect:
         IF LIMIT < 0 THEN LIMIT = 0
     END IF
 
+    IF OCOL$ <> "" THEN
+        IF OCOL$ <> "key" THEN
+            COL$ = OCOL$: GOSUB ValidateCol
+            IF VALID = 0 THEN
+                SQL_STATUS=52: SQL_MSG$="BAD ORDER COL"
+                RETURN
+            END IF
+        END IF
+    END IF
+
+    IF LIMIT = 0 THEN
+        SQL_MSG$ = "OK"
+        RETURN
+    END IF
+
     STBL$ = TBL$
     SCOLS$ = COLS$
     SPK$ = PK$
 
     IF WHEREKEY = 1 THEN
-        TF$ = DBPFX$ + "." + STBL$ + ".idx"
+        GOSUB GetTableF
         OPEN TF$ FOR INDEXED AS #3 KEY = "key"
         DIM R{}
         GET #3, R{}, KEY = WKEYVAL$
@@ -580,19 +754,17 @@ DoSelect:
         RETURN
     END IF
 
-    TF$ = DBPFX$ + "." + STBL$ + ".idx"
+    GOSUB GetTableF
     OPEN TF$ FOR INDEXED AS #3 KEY = "key"
-    DIM R{}
-    RESET #3
-
     HASSORT = 0
     IF OCOL$ <> "" THEN HASSORT = 1
-    MAXROW = 500
-    DIM RSLT$(MAXROW)
+    DIM RSLT$(500)
     RCNT = 0
     ROWS = 0
+    RESET #3
 
     WHILE NOT EOF(3)
+        DIM R{}
         GET #3, R{}, NEXT
         IF NOT FOUND(3) THEN GOTO SNX3
 
@@ -601,35 +773,49 @@ DoSelect:
             IF MATCH = 0 THEN GOTO SNX3
         END IF
 
-        GOSUB BuildRowFromRec
+        IF ISCOUNT = 0 THEN
+            GOSUB BuildRowFromRec
 
-        DUP = 0
-        IF HASDIST = 1 THEN
-            FOR DI = 0 TO RCNT - 1
-                IF RSLT$(DI) = FMT$ THEN DUP = 1: EXIT FOR
-            NEXT DI
-        END IF
+            DUP = 0
+            IF HASDIST = 1 THEN
+                PV$ = FMT$
+                GOSUB ProjOf
+                PP$ = PRJ$
+                FOR DI = 0 TO RCNT - 1
+                    PV$ = RSLT$(DI)
+                    GOSUB ProjOf
+                    IF PRJ$ = PP$ THEN DUP = 1
+                NEXT DI
+            END IF
 
-        IF DUP = 0 THEN
-            IF HASSORT = 1 OR HASDIST = 1 THEN
-                IF RCNT < MAXROW THEN
-                    RSLT$(RCNT) = FMT$
-                    RCNT = RCNT + 1
+            IF DUP = 0 THEN
+                IF HASSORT = 1 OR HASDIST = 1 THEN
+                    IF RCNT < 500 THEN
+                        RSLT$(RCNT) = FMT$
+                        RCNT = RCNT + 1
+                    ELSE
+                        IF LEN(SQL_RESULT$) + LEN(FMT$) < 2000 THEN
+                            SQL_RESULT$ = SQL_RESULT$ + FMT$ + CHR$(10)
+                        END IF
+                    END IF
+                ELSE
+                    IF LEN(SQL_RESULT$) + LEN(FMT$) < 2000 THEN
+                        SQL_RESULT$ = SQL_RESULT$ + FMT$ + CHR$(10)
+                    END IF
                 END IF
-            ELSE
-                SQL_RESULT$ = SQL_RESULT$ + FMT$ + CHR$(10)
             END IF
         END IF
 
         ROWS = ROWS + 1
-        IF LIMIT > 0 AND ROWS >= LIMIT THEN EXIT WHILE
+        IF LIMIT > 0 AND ROWS >= LIMIT THEN GOTO DSX
 SNX3:
         WC = ROWS: GOSUB Watchdog
     WEND
+DSX:
     CLOSE #3
 
     IF ISCOUNT = 1 THEN
-        SQL_RESULT$ = "COUNT=" + STR$(ROWS)
+        SQL_RESULT$ = "COUNT=" + TRIM$(STR$(ROWS))
         SQL_MSG$ = "OK"
         RETURN
     END IF
@@ -640,11 +826,23 @@ SNX3:
 
     IF HASSORT = 1 OR HASDIST = 1 THEN
         FOR RI = 0 TO RCNT - 1
-            SQL_RESULT$ = SQL_RESULT$ + RSLT$(RI) + CHR$(10)
+            IF LEN(SQL_RESULT$) + LEN(RSLT$(RI)) < 2000 THEN
+                SQL_RESULT$ = SQL_RESULT$ + RSLT$(RI) + CHR$(10)
+            END IF
         NEXT RI
     END IF
 
     SQL_MSG$ = "OK"
+    RETURN
+
+REM  Strip the "R|pkname|pkvalue|" prefix from a result row
+REM  IN: PV$  OUT: PRJ$
+ProjOf:
+    PRJ$ = PV$
+    FOR QI = 1 TO 3
+        Q1 = INSTR(PRJ$, "|")
+        IF Q1 > 0 THEN PRJ$ = MID$(PRJ$, Q1+1)
+    NEXT QI
     RETURN
 
 REM===============================================================
@@ -652,7 +850,7 @@ REM  Build a result row from the current R{}
 REM  IN: R{}, SPK$, SCOLS$, SELALL, SELCOLS$  OUT: FMT$
 REM===============================================================
 BuildRowFromRec:
-    FMT$ = "R|" + SPK$ + "|" + R{SPK$}
+    FMT$ = "R|" + SPK$ + "|" + R{"key"}
     IF SELALL = 0 THEN
         COLSET$ = SELCOLS$
     ELSE
@@ -662,10 +860,11 @@ BuildRowFromRec:
     WHILE 1
         S$ = COLSET$: D$ = ",": N = CI: GOSUB GetToken
         C$ = GETD$
-        IF C$ = "" THEN EXIT WHILE
+        IF C$ = "" THEN GOTO BRX
         FMT$ = FMT$ + "|" + C$ + "=" + R{C$}
         CI = CI + 1
     WEND
+BRX:
     RETURN
 
 REM  Sort RSLT$ array by OCOL$ in ODIR$ order
@@ -673,19 +872,28 @@ SortResultRows:
     FOR SI = 0 TO RCNT - 2
         FOR SJ = SI + 1 TO RCNT - 1
             NEED$ = "|" + OCOL$ + "="
-            PI = INSTR(RSLT$(SI), NEED$)
-            PJ = INSTR(RSLT$(SJ), NEED$)
             VI$ = ""
             VJ$ = ""
-            IF PI > 0 THEN
-                VI$ = MID$(RSLT$(SI), PI + LEN(NEED$))
-                NXI = INSTR(VI$, "|")
-                IF NXI > 0 THEN VI$ = LEFT$(VI$, NXI-1)
-            END IF
-            IF PJ > 0 THEN
-                VJ$ = MID$(RSLT$(SJ), PJ + LEN(NEED$))
-                NXJ = INSTR(VJ$, "|")
-                IF NXJ > 0 THEN VJ$ = LEFT$(VJ$, NXJ-1)
+            IF OCOL$ = "key" THEN
+                SV$ = RSLT$(SI)
+                GOSUB SortKeyVal
+                VI$ = SVV$
+                SV$ = RSLT$(SJ)
+                GOSUB SortKeyVal
+                VJ$ = SVV$
+            ELSE
+                PX = INSTR(RSLT$(SI), NEED$)
+                PJ = INSTR(RSLT$(SJ), NEED$)
+                IF PX > 0 THEN
+                    VI$ = MID$(RSLT$(SI), PX + LEN(NEED$))
+                    NXI = INSTR(VI$, "|")
+                    IF NXI > 0 THEN VI$ = LEFT$(VI$, NXI-1)
+                END IF
+                IF PJ > 0 THEN
+                    VJ$ = MID$(RSLT$(SJ), PJ + LEN(NEED$))
+                    NXJ = INSTR(VJ$, "|")
+                    IF NXJ > 0 THEN VJ$ = LEFT$(VJ$, NXJ-1)
+                END IF
             END IF
 
             SWAP = 0
@@ -705,9 +913,24 @@ SortResultRows:
     NEXT SI
     RETURN
 
+SortKeyVal:
+    REM IN: SV$  OUT: SVV$ (second pipe field = pk value)
+    SVV$ = ""
+    Q1 = INSTR(SV$, "|")
+    IF Q1 > 0 THEN
+        QQ$ = MID$(SV$, Q1+1)
+        Q2 = INSTR(QQ$, "|")
+        IF Q2 > 0 THEN
+            RR$ = MID$(QQ$, Q2+1)
+            Q3 = INSTR(RR$, "|")
+            IF Q3 > 0 THEN SVV$ = LEFT$(RR$, Q3-1)
+        END IF
+    END IF
+    RETURN
+
 
 REM ==============================================================
-REM  Watchdog — yield CPU every 50 iterations
+REM  Watchdog - yield CPU every 50 iterations
 REM  IN: WC (counter)  sleeps when WC MOD 50 = 0
 REM ==============================================================
 Watchdog:
@@ -756,9 +979,11 @@ EvalWhere:
         WEND
 
         IF ANDMATCH = 1 THEN MATCH = 1: RETURN
-        IF ORI = 0 THEN EXIT WHILE
+        MATCH = 0
+        IF ORI = 0 THEN GOTO EWX
         WP = WP + ORI + 3
     WEND
+EWX:
     RETURN
 
 
@@ -776,7 +1001,7 @@ EvalSingleCond:
 
     LI = INSTR(CU$, " LIKE ")
     IF LI > 0 THEN
-        CCOL$ = TRIM$(LEFT$(CON$, LI - 1))
+        CCOL$ = LCASE$(TRIM$(LEFT$(CON$, LI - 1)))
         CVAL$ = TRIM$(MID$(CON$, LI + 6))
         OPC = 7
         GOTO ES_EVAL
@@ -795,7 +1020,7 @@ EvalSingleCond:
     RETURN
 
 ES_FOUND:
-    CCOL$ = TRIM$(LEFT$(CON$, OI - 1))
+    CCOL$ = LCASE$(TRIM$(LEFT$(CON$, OI - 1)))
     IF OPC >= 4 THEN
         CVAL$ = TRIM$(MID$(CON$, OI + 2))
     ELSE
@@ -847,17 +1072,42 @@ ValidateCol:
     WHILE 1
         S$ = COLS$: D$ = ",": N = CI: GOSUB GetToken
         C$ = GETD$
-        IF C$ = "" THEN EXIT WHILE
+        IF C$ = "" THEN GOTO VCX
         IF UCASE$(C$) = UCASE$(COL$) THEN VALID = 1: RETURN
         CI = CI + 1
     WEND
+VCX:
     RETURN
+
+CheckSet:
+    REM IN: SET$, COLS$  OUT: SETBAD (0/1)
+    SETBAD = 0
+    SCI = 1
+    WHILE 1
+        S$ = SET$: D$ = ",": N = SCI: GOSUB GetToken
+        ASGN$ = GETD$
+        IF ASGN$ = "" THEN GOTO CSX
+        EQ = INSTR(ASGN$, "=")
+        IF EQ = 0 THEN
+            SETBAD = 1
+        ELSE
+            COL$ = LCASE$(TRIM$(LEFT$(ASGN$, EQ-1)))
+            GOSUB ValidateCol
+            IF VALID = 0 THEN SETBAD = 1
+        END IF
+        SCI = SCI + 1
+    WEND
+CSX:
+    RETURN
+
 DoUpdate:
     TMP$ = TRIM$(MID$(ST$, 7))
     SP = INSTR(TMP$, " ")
     IF SP = 0 THEN SQL_STATUS=60: SQL_MSG$="BAD UPDATE": RETURN
-    TBL$ = TRIM$(LEFT$(TMP$, SP-1))
+    TBL$ = LCASE$(TRIM$(LEFT$(TMP$, SP-1)))
     REST$ = TRIM$(MID$(TMP$, SP+1))
+    GOSUB CheckTbl
+    IF BADNAME = 1 THEN GOSUB BadName: RETURN
 
     GOSUB GetSchema
     IF COLS$ = "" THEN
@@ -865,27 +1115,27 @@ DoUpdate:
         RETURN
     END IF
 
-    USP = INSTR(UCASE$(REST$), "SET")
-    IF USP = 0 THEN
-        SQL_STATUS=64: SQL_MSG$="UPDATE REQUIRES SET"
-        RETURN
-    END IF
-    SET$ = TRIM$(MID$(REST$, USP+3))
+    RU$ = UCASE$(REST$)
 
-    UKP = INSTR(UCASE$(REST$), "KEY")
-    UWP = INSTR(UCASE$(REST$), "WHERE")
-
-    IF UKP > 0 AND UKP < USP THEN
-        KEY$ = TRIM$(MID$(REST$, UKP+4, USP-UKP-4))
-        IF KEY$ = "" THEN
+    IF LEFT$(RU$, 4) = "KEY " THEN
+        KSP = INSTR(RU$, " SET ")
+        IF KSP = 0 THEN
+            SQL_STATUS=64: SQL_MSG$="UPDATE REQUIRES SET"
+            RETURN
+        END IF
+        KVAL$ = TRIM$(MID$(REST$, 4, KSP-4))
+        IF KVAL$ = "" THEN
             SQL_STATUS=62: SQL_MSG$="BAD KEY"
             RETURN
         END IF
+        SET$ = TRIM$(MID$(REST$, KSP+5))
+        GOSUB CheckSet
+        IF SETBAD = 1 THEN SQL_STATUS=65: SQL_MSG$="BAD SET": RETURN
 
-        TF$ = DBPFX$ + "." + TBL$ + ".idx"
+        GOSUB GetTableF
         OPEN TF$ FOR INDEXED AS #3 KEY = "key"
         DIM R{}
-        GET #3, R{}, KEY = KEY$
+        GET #3, R{}, KEY = KVAL$
         IF NOT FOUND(3) THEN
             CLOSE #3: SQL_STATUS=66: SQL_MSG$="KEY NOT FOUND"
             RETURN
@@ -896,55 +1146,65 @@ DoUpdate:
         WHILE 1
             S$ = SET$: D$ = ",": N = SCI: GOSUB GetToken
             ASGN$ = GETD$
-            IF ASGN$ = "" THEN EXIT WHILE
+            IF ASGN$ = "" THEN GOTO UKX
             EQ = INSTR(ASGN$, "=")
-            IF EQ = 0 THEN
-                CLOSE #3: SQL_STATUS=65: SQL_MSG$="BAD SET"
-                RETURN
-            END IF
-            UCOL$ = TRIM$(LEFT$(ASGN$, EQ-1))
+            UCOL$ = LCASE$(TRIM$(LEFT$(ASGN$, EQ-1)))
             UVAL$ = TRIM$(MID$(ASGN$, EQ+1))
             IF SETLOG$ <> "" THEN SETLOG$ = SETLOG$ + ","
             SETLOG$ = SETLOG$ + UCOL$ + "=" + UVAL$
             R{UCOL$} = UVAL$
             SCI = SCI + 1
         WEND
+UKX:
 
         PUT #3, R{}
         CLOSE #3
         LBL$ = "UPDATED"
-        MSG$ = "UPDATE " + TBL$ + " KEY " + KEY$ + " "
+        MSG$ = "UPDATE " + TBL$ + " KEY " + KVAL$ + " "
         MSG$ = MSG$ + SETLOG$
         GOSUB LogEvent
-        SQL_MSG$ = "UPDATED " + TBL$ + " KEY " + KEY$
+        SQL_MSG$ = "UPDATED " + TBL$ + " KEY " + KVAL$
         RETURN
 
-    ELSEIF UWP > 0 AND UWP < USP THEN
-        W$ = TRIM$(MID$(REST$, UWP+5, USP-UWP-5))
+    ELSEIF LEFT$(RU$, 4) = "SET " THEN
+        SETALL$ = TRIM$(MID$(REST$, 5))
+        UWP = INSTR(UCASE$(SETALL$), " WHERE ")
+        IF UWP = 0 THEN
+            SQL_STATUS=62: SQL_MSG$="UPDATE NEEDS WHERE"
+            RETURN
+        END IF
+        SET$ = TRIM$(LEFT$(SETALL$, UWP-1))
+        W$ = TRIM$(MID$(SETALL$, UWP+6))
+        GOSUB CheckSet
+        IF SETBAD = 1 THEN SQL_STATUS=65: SQL_MSG$="BAD SET": RETURN
 
-        TF$ = DBPFX$ + "." + TBL$ + ".idx"
+        GOSUB GetTableF
         OPEN TF$ FOR INDEXED AS #3 KEY = "key"
-        DIM R{}
         RESET #3
         UPDCNT = 0
         WHILE NOT EOF(3)
+            DIM R{}
             GET #3, R{}, NEXT
             IF NOT FOUND(3) THEN GOTO UPBX
             GOSUB EvalWhere
             IF MATCH = 1 THEN
                 SCI = 1
-                WHILE 1
+                MORESET = 1
+                WHILE MORESET = 1
                     S$ = SET$: D$ = ",": N = SCI
                     GOSUB GetToken
                     ASGN$ = GETD$
-                    IF ASGN$ = "" THEN EXIT WHILE
-                    EQ = INSTR(ASGN$, "=")
-                    IF EQ > 0 THEN
-                        UCOL$ = TRIM$(LEFT$(ASGN$, EQ-1))
-                        UVAL$ = TRIM$(MID$(ASGN$, EQ+1))
-                        R{UCOL$} = UVAL$
+                    IF ASGN$ = "" THEN
+                        MORESET = 0
+                    ELSE
+                        EQ = INSTR(ASGN$, "=")
+                        IF EQ > 0 THEN
+                            UCOL$ = LCASE$(TRIM$(LEFT$(ASGN$, EQ-1)))
+                            UVAL$ = TRIM$(MID$(ASGN$, EQ+1))
+                            R{UCOL$} = UVAL$
+                        END IF
+                        SCI = SCI + 1
                     END IF
-                    SCI = SCI + 1
                 WEND
                 PUT #3, R{}
                 UPDCNT = UPDCNT + 1
@@ -955,9 +1215,9 @@ UPBX:
         CLOSE #3
         LBL$ = "UPDATED"
         MSG$ = "BULK UPDATE " + TBL$ + " "
-        MSG$ = MSG$ + STR$(UPDCNT) + " rows"
+        MSG$ = MSG$ + TRIM$(STR$(UPDCNT)) + " rows"
         GOSUB LogEvent
-        SQL_MSG$ = "UPDATED " + STR$(UPDCNT)
+        SQL_MSG$ = "UPDATED " + TRIM$(STR$(UPDCNT))
         SQL_MSG$ = SQL_MSG$ + " ROWS IN " + TBL$
         RETURN
     END IF
@@ -973,8 +1233,10 @@ DoReplace:
     TMP$ = TRIM$(MID$(ST$, 8))
     SP = INSTR(TMP$, " ")
     IF SP = 0 THEN SQL_STATUS=70: SQL_MSG$="BAD REPLACE": RETURN
-    TBL$ = TRIM$(LEFT$(TMP$, SP-1))
+    TBL$ = LCASE$(TRIM$(LEFT$(TMP$, SP-1)))
     REST$ = TRIM$(MID$(TMP$, SP+1))
+    GOSUB CheckTbl
+    IF BADNAME = 1 THEN GOSUB BadName: RETURN
 
     GOSUB GetSchema
     IF COLS$ = "" THEN
@@ -982,26 +1244,22 @@ DoReplace:
         RETURN
     END IF
 
-    PKPOS = INSTR(UCASE$(REST$), "KEY")
-    IF PKPOS = 0 THEN
+    RU$ = UCASE$(REST$)
+    IF LEFT$(RU$, 4) <> "KEY " THEN
         SQL_STATUS=72: SQL_MSG$="REPLACE REQUIRES KEY"
         RETURN
     END IF
-    TMP2$ = TRIM$(MID$(REST$, PKPOS+3))
-    SP2 = INSTR(TMP2$, " ")
-    IF SP2 = 0 THEN
+    VPOS = INSTR(RU$, " VALUES ")
+    IF VPOS = 0 THEN
         SQL_STATUS=73: SQL_MSG$="REPLACE REQUIRES VALUES"
         RETURN
     END IF
-    KEY$ = TRIM$(LEFT$(TMP2$, SP2-1))
-    REST2$ = TRIM$(MID$(TMP2$, SP2+1))
-
-    VPOS = INSTR(UCASE$(REST2$), "VALUES")
-    IF VPOS = 0 THEN
-        SQL_STATUS=74: SQL_MSG$="REPLACE REQUIRES VALUES"
+    KVAL$ = TRIM$(MID$(REST$, 4, VPOS-4))
+    IF KVAL$ = "" THEN
+        SQL_STATUS=72: SQL_MSG$="REPLACE REQUIRES KEY"
         RETURN
     END IF
-    VSTR$ = TRIM$(MID$(REST2$, VPOS+6))
+    VSTR$ = TRIM$(MID$(REST$, VPOS+8))
     OP = INSTR(VSTR$, "("): CP = INSTR(VSTR$, ")")
     IF OP=0 OR CP=0 OR CP<OP THEN
         SQL_STATUS=75: SQL_MSG$="BAD VALUES"
@@ -1010,31 +1268,32 @@ DoReplace:
     VALS$ = TRIM$(MID$(VSTR$, OP+1, CP-OP-1))
 
     DIM R{}
-    R{"key"} = KEY$
+    R{"key"} = KVAL$
     CI = 1
     WHILE 1
         S$ = COLS$: D$ = ",": N = CI: GOSUB GetToken
         COL$ = GETD$
-        IF COL$ = "" THEN EXIT WHILE
+        IF COL$ = "" THEN GOTO RPX
         S$ = VALS$: D$ = ",": N = CI: GOSUB GetToken
         VV$ = GETD$
         R{COL$} = VV$
         CI = CI + 1
     WEND
+RPX:
 
-    TF$ = DBPFX$ + "." + TBL$ + ".idx"
+    GOSUB GetTableF
     OPEN TF$ FOR INDEXED AS #3 KEY = "key"
     PUT #3, R{}
     CLOSE #3
     LBL$ = "UPDATED"
-    MSG$ = "REPLACE " + TBL$ + " KEY " + KEY$
+    MSG$ = "REPLACE " + TBL$ + " KEY " + KVAL$
     GOSUB LogEvent
-    SQL_MSG$ = "REPLACED " + TBL$ + " KEY " + KEY$
+    SQL_MSG$ = "REPLACED " + TBL$ + " KEY " + KVAL$
     RETURN
 
 
 REM ==============================================================
-REM  DELETE FROM t KEY k
+REM  DELETE FROM t KEY k  |  DELETE FROM t WHERE cond
 REM ==============================================================
 DoDelete:
     PF = INSTR(UP$, "FROM")
@@ -1042,8 +1301,10 @@ DoDelete:
     TMP$ = TRIM$(MID$(ST$, PF+4))
     SP = INSTR(TMP$, " ")
     IF SP = 0 THEN SQL_STATUS=81: SQL_MSG$="BAD DELETE": RETURN
-    TBL$ = TRIM$(LEFT$(TMP$, SP-1))
+    TBL$ = LCASE$(TRIM$(LEFT$(TMP$, SP-1)))
     REST$ = TRIM$(MID$(TMP$, SP+1))
+    GOSUB CheckTbl
+    IF BADNAME = 1 THEN GOSUB BadName: RETURN
 
     GOSUB GetSchema
     IF COLS$ = "" THEN
@@ -1051,30 +1312,33 @@ DoDelete:
         RETURN
     END IF
 
-    PKPOS = INSTR(UCASE$(REST$), "KEY")
-    WP = INSTR(UCASE$(REST$), "WHERE")
+    RU$ = UCASE$(REST$)
 
-    IF PKPOS > 0 THEN
-        KEY$ = TRIM$(MID$(REST$, PKPOS+3))
-        TF$ = DBPFX$ + "." + TBL$ + ".idx"
+    IF LEFT$(RU$, 4) = "KEY " THEN
+        KVAL$ = TRIM$(MID$(REST$, 4))
+        IF KVAL$ = "" THEN
+            SQL_STATUS=82: SQL_MSG$="DELETE REQUIRES KEY/WHERE"
+            RETURN
+        END IF
+        GOSUB GetTableF
         OPEN TF$ FOR INDEXED AS #3 KEY = "key"
-        DELETE #3, KEY = KEY$
+        DELETE #3, KEY = KVAL$
         CLOSE #3
         LBL$ = "DELETED"
-        MSG$ = "DELETE " + TBL$ + " KEY " + KEY$
+        MSG$ = "DELETE " + TBL$ + " KEY " + KVAL$
         GOSUB LogEvent
-        SQL_MSG$ = "DELETED " + TBL$ + " KEY " + KEY$
+        SQL_MSG$ = "DELETED " + TBL$ + " KEY " + KVAL$
         RETURN
 
-    ELSEIF WP > 0 THEN
-        W$ = TRIM$(MID$(REST$, WP+5))
+    ELSEIF LEFT$(RU$, 6) = "WHERE " THEN
+        W$ = TRIM$(MID$(REST$, 7))
 
-        TF$ = DBPFX$ + "." + TBL$ + ".idx"
+        GOSUB GetTableF
         OPEN TF$ FOR INDEXED AS #3 KEY = "key"
-        DIM R{}
         RESET #3
         DELCNT = 0
         WHILE NOT EOF(3)
+            DIM R{}
             GET #3, R{}, NEXT
             IF NOT FOUND(3) THEN GOTO DLNX
             GOSUB EvalWhere
@@ -1088,9 +1352,9 @@ DLNX:
         CLOSE #3
         LBL$ = "DELETED"
         MSG$ = "BULK DELETE " + TBL$ + " "
-        MSG$ = MSG$ + STR$(DELCNT) + " rows"
+        MSG$ = MSG$ + TRIM$(STR$(DELCNT)) + " rows"
         GOSUB LogEvent
-        SQL_MSG$ = "DELETED " + STR$(DELCNT)
+        SQL_MSG$ = "DELETED " + TRIM$(STR$(DELCNT))
         SQL_MSG$ = SQL_MSG$ + " ROWS FROM " + TBL$
         RETURN
     END IF
@@ -1104,8 +1368,13 @@ REM  DROP TABLE t
 REM ==============================================================
 DoDrop:
     TMP$ = TRIM$(MID$(ST$, 5))
+    IF LEFT$(UCASE$(TMP$), 5) = "TABLE" THEN
+        TMP$ = TRIM$(MID$(TMP$, 6))
+    END IF
     IF TMP$ = "" THEN SQL_STATUS=85: SQL_MSG$="BAD DROP": RETURN
-    TBL$ = TMP$
+    TBL$ = LCASE$(TRIM$(TMP$))
+    GOSUB CheckTbl
+    IF BADNAME = 1 THEN GOSUB BadName: RETURN
 
     GOSUB GetSchema
     IF COLS$ = "" THEN
@@ -1133,12 +1402,16 @@ DoShow:
     END IF
     SQL_RESULT$ = ""
     OPEN SYSF$ FOR INDEXED AS #2 KEY = "name"
-    DIM S{}
     RESET #2
     WHILE NOT EOF(2)
+        DIM S{}
         GET #2, S{}, NEXT
-        IF FOUND(2) AND S{"name"} <> "_schema_meta" THEN
-            SQL_RESULT$ = SQL_RESULT$ + S{"name"} + CHR$(10)
+        IF FOUND(2) THEN
+            IF S{"name"} <> "_schema_meta" THEN
+                IF LEN(SQL_RESULT$) + LEN(S{"name"}) < 2000 THEN
+                    SQL_RESULT$ = SQL_RESULT$ + S{"name"} + CHR$(10)
+                END IF
+            END IF
         END IF
         X = SLEEP(0.1)
     WEND
@@ -1153,7 +1426,9 @@ REM ==============================================================
 DoDescribe:
     TMP$ = TRIM$(MID$(ST$, 9))
     IF TMP$ = "" THEN SQL_STATUS=89: SQL_MSG$="BAD DESCRIBE": RETURN
-    TBL$ = TMP$
+    TBL$ = LCASE$(TRIM$(TMP$))
+    GOSUB CheckTbl
+    IF BADNAME = 1 THEN GOSUB BadName: RETURN
     GOSUB GetSchema
     IF COLS$ = "" THEN
         SQL_STATUS=51: SQL_MSG$="NO SUCH TABLE"
@@ -1173,40 +1448,64 @@ DoAlter:
     TMP$ = TRIM$(MID$(ST$, 12))
     SP = INSTR(TMP$, " ")
     IF SP = 0 THEN SQL_STATUS=87: SQL_MSG$="BAD ALTER": RETURN
-    TBL$ = TRIM$(LEFT$(TMP$, SP-1))
+    TBL$ = LCASE$(TRIM$(LEFT$(TMP$, SP-1)))
     REST$ = TRIM$(MID$(TMP$, SP+1))
+    GOSUB CheckTbl
+    IF BADNAME = 1 THEN GOSUB BadName: RETURN
+
     GOSUB GetSchema
     IF COLS$ = "" THEN
         SQL_STATUS=51: SQL_MSG$="NO SUCH TABLE"
         RETURN
     END IF
+
     AU$ = UCASE$(REST$)
     IF LEFT$(AU$, 4) = "ADD " THEN
-        NEWCOL$ = TRIM$(MID$(REST$, 5))
+        NEWCOL$ = LCASE$(TRIM$(MID$(REST$, 5)))
+        IF NEWCOL$="" THEN GOSUB BadAlter: RETURN
+        C$ = NEWCOL$
+        GOSUB CheckCol
+        IF BADCOL = 1 THEN
+            SQL_STATUS=87: SQL_MSG$="BAD COLUMN NAME"
+            RETURN
+        END IF
         COL$ = NEWCOL$: GOSUB ValidateCol
         IF VALID = 1 THEN
             SQL_STATUS=87: SQL_MSG$="COLUMN EXISTS"
             RETURN
         END IF
         COLS$ = COLS$ + "," + NEWCOL$
+        NEWSEQ = SEQ
         GOSUB PutSchema
         SQL_MSG$ = "ALTER ADD " + NEWCOL$ + " TO " + TBL$
         RETURN
     ELSEIF LEFT$(AU$, 5) = "DROP " THEN
-        DCOL$ = TRIM$(MID$(REST$, 6))
+        DCOL$ = LCASE$(TRIM$(MID$(REST$, 6)))
+        IF DCOL$ = "" THEN SQL_STATUS=87: SQL_MSG$="BAD ALTER": RETURN
+        IF DCOL$ = LCASE$(PK$) THEN
+            SQL_STATUS=87: SQL_MSG$="CANNOT DROP PK"
+            RETURN
+        END IF
+        COL$ = DCOL$: GOSUB ValidateCol
+        IF VALID = 0 THEN
+            SQL_STATUS=87: SQL_MSG$="NO SUCH COLUMN"
+            RETURN
+        END IF
         NEWCOLS$ = ""
         CI = 1
         WHILE 1
             S$ = COLS$: D$ = ",": N = CI: GOSUB GetToken
             C$ = GETD$
-            IF C$ = "" THEN EXIT WHILE
+            IF C$ = "" THEN GOTO ADX
             IF UCASE$(C$) <> UCASE$(DCOL$) THEN
                 IF NEWCOLS$ <> "" THEN NEWCOLS$ = NEWCOLS$ + ","
                 NEWCOLS$ = NEWCOLS$ + C$
             END IF
             CI = CI + 1
         WEND
+ADX:
         COLS$ = NEWCOLS$
+        NEWSEQ = SEQ
         GOSUB PutSchema
         SQL_MSG$ = "ALTER DROP " + DCOL$ + " FROM " + TBL$
         LBL$ = "UPDATED"
@@ -1226,11 +1525,11 @@ SearchCmd:
     SQL_RESULT$ = ""
 
     S$ = SQL_STMT$: D$ = "|": N = 1: GOSUB GetToken
-    TBL$ = GETD$
+    TBL$ = LCASE$(GETD$)
     S$ = SQL_STMT$: D$ = "|": N = 2: GOSUB GetToken
     TERM$ = GETD$
     S$ = SQL_STMT$: D$ = "|": N = 3: GOSUB GetToken
-    COLF$ = GETD$
+    COLF$ = LCASE$(GETD$)
     S$ = SQL_STMT$: D$ = "|": N = 4: GOSUB GetToken
     SMODE$ = UCASE$(GETD$)
 
@@ -1240,45 +1539,60 @@ SearchCmd:
     END IF
     IF SMODE$ = "" THEN SMODE$ = "CONTAINS"
 
+    GOSUB CheckTbl
+    IF BADNAME = 1 THEN GOSUB BadName: RETURN
+
     GOSUB GetSchema
     IF COLS$ = "" THEN SQL_STATUS=91: SQL_MSG$="NO SUCH TABLE": RETURN
+
+    IF COLF$ <> "" THEN
+        COL$ = COLF$: GOSUB ValidateCol
+        IF VALID = 0 THEN
+            SQL_STATUS=92: SQL_MSG$="BAD SEARCH COL"
+            RETURN
+        END IF
+    END IF
 
     STBL$ = TBL$
     SCOLS$ = COLS$
     SPK$ = PK$
     STERM$ = UCASE$(TERM$)
 
-    TF$ = DBPFX$ + "." + STBL$ + ".idx"
+    GOSUB GetTableF
     OPEN TF$ FOR INDEXED AS #3 KEY = "key"
-    DIM R{}
     RESET #3
     RC = 0
     WHILE NOT EOF(3)
+        DIM R{}
         GET #3, R{}, NEXT
         IF NOT FOUND(3) THEN GOTO SCNX3
         IF COLF$ = "" THEN
-            FOUND$ = "0"
+            HIT$ = "0"
             CI = 1
-            WHILE 1
+            MORECOL = 1
+            WHILE MORECOL = 1
                 S$ = SCOLS$: D$ = ",": N = CI: GOSUB GetToken
                 C$ = GETD$
-                IF C$ = "" THEN EXIT WHILE
-                GOSUB MatchField
-                IF MATCH = 1 THEN FOUND$ = "1"
-                CI = CI + 1
+                IF C$ = "" THEN
+                    MORECOL = 0
+                ELSE
+                    GOSUB MatchField
+                    IF MATCH = 1 THEN HIT$ = "1"
+                    CI = CI + 1
+                END IF
             WEND
-            IF FOUND$ = "1" THEN GOSUB BuildResultRow
+            IF HIT$ = "1" THEN GOSUB BuildResultRow
         ELSE
             C$ = COLF$
             GOSUB MatchField
             IF MATCH = 1 THEN GOSUB BuildResultRow
         END IF
 SCNX3:
-            WC = RC: GOSUB Watchdog
-        WEND
-        CLOSE #3
-        SQL_MSG$ = "OK"
-        RETURN
+        WC = RC: GOSUB Watchdog
+    WEND
+    CLOSE #3
+    SQL_MSG$ = "OK"
+    RETURN
 
 REM  Match a field value against the search term
 REM  IN: C$, R{}, STERM$, SMODE$  OUT: MATCH
@@ -1300,16 +1614,19 @@ MatchField:
 
 REM  Build result row for SEARCH (uses R{}, SPK$, SCOLS$)
 BuildResultRow:
-    FMT$ = "R|" + SPK$ + "|" + R{SPK$}
+    FMT$ = "R|" + SPK$ + "|" + R{"key"}
     CI = 1
     WHILE 1
         S$ = SCOLS$: D$ = ",": N = CI: GOSUB GetToken
         C$ = GETD$
-        IF C$ = "" THEN EXIT WHILE
+        IF C$ = "" THEN GOTO BRRX
         FMT$ = FMT$ + "|" + C$ + "=" + R{C$}
         CI = CI + 1
     WEND
-    SQL_RESULT$ = SQL_RESULT$ + FMT$ + CHR$(10)
+BRRX:
+    IF LEN(SQL_RESULT$) + LEN(FMT$) < 2000 THEN
+        SQL_RESULT$ = SQL_RESULT$ + FMT$ + CHR$(10)
+    END IF
     RC = RC + 1
     RETURN
 
@@ -1333,49 +1650,73 @@ TxnRollback:
     RETURN
 
 TxnCommit:
+    OPEN BATF$ FOR APPEND AS #4
+    CLOSE #4
     OPEN BATF$ FOR INPUT AS #4
     IF EOF(4) THEN CLOSE #4: SQL_MSG$="NO TXN": RETURN
     INPUT #4, L$
     L$ = TRIM$(L$)
     IF L$ <> "BEGIN" THEN CLOSE #4: SQL_MSG$="NO TXN": RETURN
 
+    DIM BQ$(500)
     N = 0
-    OLD$ = SQL_STMT$
-    OLDM$ = SQL_MODE$
-    SQL_MODE$ = "RW"
     WHILE NOT EOF(4)
         INPUT #4, L$
         L$ = TRIM$(L$)
         IF L$ <> "" THEN
-            N = N + 1
-            SQL_STMT$ = L$
-            GOSUB ExecSQL
-            IF SQL_STATUS <> 0 THEN
-                CLOSE #4
-                OPEN BATF$ FOR OUTPUT AS #4
-                CLOSE #4
-                SQL_STMT$ = OLD$
-                SQL_MODE$ = OLDM$
-                TMPMSG$ = SQL_MSG$
-                SQL_MSG$ = "TXN ABORTED AT STMT "
-                SQL_MSG$ = SQL_MSG$ + STR$(N) + ": " + TMPMSG$
-                LBL$ = "ERROR"
-                MSG$ = "Transaction aborted at stmt " + STR$(N)
-                GOSUB LogEvent
-                RETURN
+            IF N < 500 THEN
+                N = N + 1
+                BQ$(N) = L$
             END IF
         END IF
     WEND
     CLOSE #4
 
+    REM Clear the queue BEFORE executing so EXEC does not re-queue
     OPEN BATF$ FOR OUTPUT AS #4
     CLOSE #4
+
+    OLD$ = SQL_STMT$
+    OLDM$ = SQL_MODE$
+    SQL_MODE$ = "RW"
+
+    MAXB = VAL(OPT{"301"})
+    IF MAXB > 0 AND N > MAXB THEN
+        SQL_STMT$ = OLD$
+        SQL_MODE$ = OLDM$
+        SQL_STATUS = 93
+        SQL_MSG$ = "TXN TOO LARGE"
+        LBL$ = "ERROR"
+        MSG$ = "Transaction exceeds batch limit"
+        GOSUB LogEvent
+        RETURN
+    END IF
+
+    REM ExecSQL clobbers N (token index), so keep the count in NQ
+    NQ = N
+    FOR BI = 1 TO NQ
+        SQL_STMT$ = BQ$(BI)
+        GOSUB ExecSQL
+        IF SQL_STATUS <> 0 THEN
+            TMPMSG$ = SQL_MSG$
+            SQL_STMT$ = OLD$
+            SQL_MODE$ = OLDM$
+            SQL_MSG$ = "TXN ABORTED AT STMT "
+            SQL_MSG$ = SQL_MSG$ + TRIM$(STR$(BI)) + ": " + TMPMSG$
+            LBL$ = "ERROR"
+            MSG$ = "Transaction aborted at stmt " + TRIM$(STR$(BI))
+            GOSUB LogEvent
+            RETURN
+        END IF
+        WC = BI: GOSUB Watchdog
+    NEXT BI
+
     SQL_STMT$ = OLD$
     SQL_MODE$ = OLDM$
     LBL$ = "CLOSED"
-    MSG$ = "Transaction committed (" + STR$(N) + " stmts)"
+    MSG$ = "Transaction committed (" + TRIM$(STR$(NQ)) + " stmts)"
     GOSUB LogEvent
-    SQL_MSG$ = "TXN COMMIT (" + STR$(N) + " stmts)"
+    SQL_MSG$ = "TXN COMMIT (" + TRIM$(STR$(NQ)) + " stmts)"
     RETURN
 
 
