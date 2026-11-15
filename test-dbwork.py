@@ -25,6 +25,7 @@ SCENARIOS = {}
 
 GLOBAL_BAD = ["?SYNTAX", "?UNDEFINED", "?ILLEGAL", "?STRING", "?REDO",
               "?DIVISION", "?OUT OF", "?NEXT WITHOUT", "?INPUT PAST END",
+              "?EXECUTION",
               "?FILE NOT FOUND"]
 
 
@@ -197,6 +198,25 @@ SCENARIOS["tables"] = {
              "RESERVED", "BAD COLUMN NAME", "BAD TABLE NAME"],
     "must_not": ["?SYNTAX", "?ILLEGAL"],
     "final_must_not": ["zzlinks", "bad name"],
+}
+
+SCENARIOS["design"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST2_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": ["N", "WBTEST2", "N", "customers", "id,name,email,city",
+               "A", "phone", "D", "5", "Y", "T", "x", "B",
+               "N", "one", "a", "D", "1", "", "T", "one"],
+    "must": ["Table: customers", "phone", "LAST COLUMN", "Dropped"],
+    "must_not": ["?SYNTAX", "?ILLEGAL"],
+    "final_must_not": ["one"],
+}
+SCENARIOS["dropcancel"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST2_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": ["N", "WBTEST2", "N", "customers", "id,name", "T", "x", "B"],
+    "must": ["customers"],
+    "must_not": ["?SYNTAX", "UNKNOWN SELECTION"],
+    "final_must": ["DB: WBTEST2"],
 }
 
 

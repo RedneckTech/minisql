@@ -27,6 +27,9 @@ REM  Boot: defaults, horizontal rule, batch reset, registry
 REM ==============================================================
 WB_BOOT:
     SQL_MODE$ = "RW"
+    TLOADED = 0
+    RNEED = 0
+    STATUS$ = ""
     WB_HL$ = ""
     FOR I = 1 TO 77
         WB_HL$ = WB_HL$ + BOXCHAR$(5)
@@ -328,6 +331,30 @@ WB_LOADCOLS:
     RETURN
 
 
+WB_COUNTROWS:
+    SQL_STMT$ = "SELECT COUNT(*) FROM " + TBL$
+    GOSUB WB_EXEC
+    IF SQL_STATUS = 0 THEN
+        GOSUB WB_PARSECOUNT
+        ROWS = CNT
+    ELSE
+        ROWS = 0
+    END IF
+    RETURN
+
+WB_DROPCOL:
+    REM IN: TBL$, DCOL$
+    SQL_STMT$ = "ALTER TABLE " + TBL$ + " DROP " + DCOL$
+    GOSUB WB_EXEC
+    RETURN
+
+WB_DROPTABLE:
+    REM IN: TBL$
+    SQL_STMT$ = "DROP TABLE " + TBL$
+    GOSUB WB_EXEC
+    RETURN
+
+
 REM ==============================================================
 REM  Open/create a database, ensure zzlinks, remember it
 REM ==============================================================
@@ -352,6 +379,9 @@ WB_OPENDB:
     TBL$ = ""
     TCOLS$ = ""
     TPK$ = "key"
+    TLOADED = 0
+    RNEED = 0
+    STATUS$ = ""
     SCREEN = 2
     RETURN
 
@@ -501,7 +531,10 @@ SCR_TABLES:
     GOSUB WB_LINE
     TEXT$ = ""
     GOSUB WB_LINE
-    GOSUB WB_LOADTABLES
+    IF TLOADED = 0 THEN
+        GOSUB WB_LOADTABLES
+        TLOADED = 1
+    END IF
     IF TBNT = 0 THEN
         TEXT$ = "  No tables yet."
         GOSUB WB_LINE
@@ -527,6 +560,7 @@ SCR_TABLES:
         RETURN
     END IF
     IF UCASE$(ANS$) = "R" THEN
+        TLOADED = 0
         RETURN
     END IF
     IF UCASE$(ANS$) = "M" THEN
@@ -542,6 +576,9 @@ SCR_TABLES:
     IF VAL(ANS$) >= 1 AND VAL(ANS$) <= TBNT THEN
         TBL$ = TBN$(VAL(ANS$))
         TCOLS$ = TBC$(VAL(ANS$))
+        TPK$ = "key"
+        STATUS$ = ""
+        RNEED = 1
         SCREEN = 3
         RETURN
     END IF
@@ -622,29 +659,164 @@ SCR_NEWTABLE:
         GOSUB WB_ERR
         RETURN
     END IF
+    TPK$ = "key"
+    STATUS$ = ""
+    TLOADED = 0
+    RNEED = 1
     SCREEN = 3
     RETURN
 
 
 REM ==============================================================
-REM  Table design (Task 3 placeholder; Task 4 fills it)
+REM  Table design: columns, row count, add/drop column, drop table
 REM ==============================================================
 SCR_DESIGN:
+    IF RNEED = 1 THEN
+        GOSUB WB_COUNTROWS
+        RNEED = 0
+    END IF
+    GOSUB WB_LOADCOLS
     GOSUB WB_CLS
     TITLE$ = "MiniSQL Workbench"
-    FOOT$ = "B=back"
+    FOOT$ = "A=add column   D n=drop   T=drop table   B=back"
     GOSUB WB_HEADER
     TEXT$ = "  Table: " + TBL$
     GOSUB WB_LINE
-    TEXT$ = "  Columns: " + TCOLS$
+    TEXT$ = "  KEY: " + TPK$ + "    Rows: " + TRIM$(STR$(ROWS))
     GOSUB WB_LINE
+    TEXT$ = "  Links: (none)"
+    GOSUB WB_LINE
+    TEXT$ = "  " + STATUS$
+    GOSUB WB_LINE
+    TEXT$ = ""
+    GOSUB WB_LINE
+    IF COLNT = 0 THEN
+        TEXT$ = "  (no columns)"
+        GOSUB WB_LINE
+    ELSE
+        FOR CI = 1 TO COLNT
+            TEXT$ = "  " + TRIM$(STR$(CI)) + "  " + COLN$(CI)
+            GOSUB WB_LINE
+        NEXT CI
+    END IF
     TEXT$ = ""
     GOSUB WB_LINE
     GOSUB WB_FOOTER
     PROMPT$ = "Selection: "
     GOSUB WB_PROMPT
-    IF UCASE$(ANS$) = "B" THEN
+    IF UCASE$(ANS$) = "B" OR UCASE$(ANS$) = "Q" THEN
         SCREEN = 2
+        RETURN
+    END IF
+    IF UCASE$(ANS$) = "A" THEN
+        PROMPT$ = "New column: "
+        GOSUB WB_PROMPT
+        V$ = LCASE$(TRIM$(ANS$))
+        GOSUB WB_VALNAME
+        IF VBAD = 1 THEN
+            ERR$ = "BAD COLUMN NAME"
+            GOSUB WB_ERR
+            RETURN
+        END IF
+        DUP = 0
+        FOR CI = 1 TO COLNT
+            IF COLN$(CI) = V$ THEN DUP = 1
+        NEXT CI
+        IF DUP = 1 THEN
+            ERR$ = "COLUMN EXISTS"
+            GOSUB WB_ERR
+            RETURN
+        END IF
+        SQL_STMT$ = "ALTER TABLE " + TBL$ + " ADD " + V$
+        GOSUB WB_EXEC
+        IF SQL_STATUS <> 0 THEN
+            ERR$ = SQL_MSG$
+            GOSUB WB_ERR
+        ELSE
+            IF TCOLS$ = "" THEN
+                TCOLS$ = V$
+            ELSE
+                TCOLS$ = TCOLS$ + "," + V$
+            END IF
+            STATUS$ = "Added " + V$
+            TLOADED = 0
+        END IF
+        RETURN
+    END IF
+    ISD = 0
+    IF UCASE$(ANS$) = "D" THEN
+        PROMPT$ = "Column number: "
+        GOSUB WB_PROMPT
+        DN = VAL(TRIM$(ANS$))
+        ISD = 1
+    ELSEIF LEFT$(UCASE$(ANS$), 2) = "D " THEN
+        S$ = ANS$
+        D$ = " "
+        N = 2
+        GOSUB WB_GETTOK
+        DN = VAL(GETD$)
+        ISD = 1
+    END IF
+    IF ISD = 1 THEN
+        IF DN < 1 OR DN > COLNT THEN
+            ERR$ = "BAD COLUMN NUMBER"
+            GOSUB WB_ERR
+            RETURN
+        END IF
+        IF COLNT = 1 THEN
+            ERR$ = "LAST COLUMN"
+            GOSUB WB_ERR
+            RETURN
+        END IF
+        DCOL$ = COLN$(DN)
+        PROMPT$ = "Drop column " + DCOL$
+        GOSUB WB_YES
+        IF YESNO = 1 THEN
+            GOSUB WB_DROPCOL
+            IF SQL_STATUS <> 0 THEN
+                ERR$ = SQL_MSG$
+                GOSUB WB_ERR
+            ELSE
+                NEWCOLS$ = ""
+                FOR CI = 1 TO COLNT
+                    IF CI <> DN THEN
+                        IF NEWCOLS$ <> "" THEN NEWCOLS$ = NEWCOLS$ + ","
+                        NEWCOLS$ = NEWCOLS$ + COLN$(CI)
+                    END IF
+                NEXT CI
+                TCOLS$ = NEWCOLS$
+                STATUS$ = "Dropped " + DCOL$
+                TLOADED = 0
+            END IF
+        END IF
+        RETURN
+    END IF
+    IF UCASE$(ANS$) = "T" THEN
+        PROMPT$ = "Type table name to confirm: "
+        GOSUB WB_PROMPT
+        IF UCASE$(TRIM$(ANS$)) <> UCASE$(TBL$) THEN
+            PRINT "Cancelled"
+            RETURN
+        END IF
+        GOSUB WB_DROPTABLE
+        IF SQL_STATUS <> 0 THEN
+            ERR$ = SQL_MSG$
+            GOSUB WB_ERR
+        ELSE
+            STATUS$ = ""
+            TLOADED = 0
+            SCREEN = 2
+        END IF
+        RETURN
+    END IF
+    IF UCASE$(ANS$) = "I" THEN
+        ERR$ = "INSERT ROW IS NOT IMPLEMENTED YET"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    IF UCASE$(ANS$) = "V" THEN
+        ERR$ = "VIEW ROW IS NOT IMPLEMENTED YET"
+        GOSUB WB_ERR
         RETURN
     END IF
     ERR$ = "UNKNOWN SELECTION"
