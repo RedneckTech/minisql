@@ -1,0 +1,315 @@
+REM ==============================================================
+REM  verify2.bas   -   MiniSQL verification part
+REM  Checks SQL_RESULT$ contents and status codes for every
+REM  feature.  Prints one progress line per check, details on
+REM  failure, and a final PASS/FAIL summary.
+REM ==============================================================
+START:
+COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$
+COMMON SQL_STATUS, SQL_MSG$
+
+PASS = 0
+FAIL = 0
+LF$ = CHR$(10)
+SQL_DB$ = "VERIFY2"
+SQL_MODE$ = "RW"
+SQL_CMD$ = "INITDB"
+GOSUB T_RUNSQL
+TEST$ = "C00 INITDB"
+GOSUB T_SHOW
+WSTAT = 0
+GOSUB T_CKST
+
+REM ---------- setup table v1 ----------
+TEST$ = "C00B CREATE v1"
+GOSUB T_SHOW
+SQL_STMT$ = "CREATE TABLE v1 (name,age,city) PK KEY"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00C INSERT r1"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r1 VALUES (Alice,25,Chicago)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00D INSERT r2"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r2 VALUES (Bob,30,Boston)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00E INSERT r3"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r3 VALUES (Carol,22,Chicago)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00F INSERT r4"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r4 VALUES (Dave,35,Denver)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00G INSERT r5"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r5 VALUES (Eve,28,Austin)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+
+REM ---------- SELECT / WHERE ----------
+TEST$ = "C24 UPDATE KEY single"
+GOSUB T_SHOW
+SQL_STMT$ = "UPDATE v1 KEY r1 SET age=26"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+
+TEST$ = "C25 verify key update"
+GOSUB T_SHOW
+SQL_STMT$ = "SELECT * FROM v1 WHERE KEY=r1"
+GOSUB T_EXEC
+WANT$ = "R|key|r1|name=Alice|age=26|city=Chicago" + LF$
+GOT$ = SQL_RESULT$
+GOSUB T_CKEQ
+
+TEST$ = "C26 UPDATE KEY multi"
+GOSUB T_SHOW
+SQL_STMT$ = "UPDATE v1 KEY r2 SET age=31,city=NYC"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+
+TEST$ = "C27 verify multi update"
+GOSUB T_SHOW
+SQL_STMT$ = "SELECT * FROM v1 WHERE KEY=r2"
+GOSUB T_EXEC
+WANT$ = "R|key|r2|name=Bob|age=31|city=NYC" + LF$
+GOT$ = SQL_RESULT$
+GOSUB T_CKEQ
+
+TEST$ = "C28 UPDATE missing key"
+GOSUB T_SHOW
+SQL_STMT$ = "UPDATE v1 KEY zzz SET age=1"
+GOSUB T_EXEC
+WSTAT = 66
+GOSUB T_CKST
+
+TEST$ = "C29 bulk UPDATE"
+GOSUB T_SHOW
+SQL_STMT$ = "UPDATE v1 SET city=Chicago WHERE age>=30"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+WANT$ = "UPDATED 2"
+GOSUB T_CKMSG
+
+TEST$ = "C30 verify bulk rows"
+GOSUB T_SHOW
+SQL_STMT$ = "SELECT * FROM v1 WHERE KEY=r2"
+GOSUB T_EXEC
+WANT$ = "city=Chicago": GOSUB T_CKCONT
+SQL_STMT$ = "SELECT * FROM v1 WHERE KEY=r4"
+GOSUB T_EXEC
+WANT$ = "city=Chicago": GOSUB T_CKCONT
+
+TEST$ = "C31 bulk UPDATE zero"
+GOSUB T_SHOW
+SQL_STMT$ = "UPDATE v1 SET age=99 WHERE city=Nowhere"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+WANT$ = "UPDATED 0"
+GOSUB T_CKMSG
+
+TEST$ = "C32 UPDATE no WHERE"
+GOSUB T_SHOW
+SQL_STMT$ = "UPDATE v1 SET age=1"
+GOSUB T_EXEC
+WSTAT = 62
+GOSUB T_CKST
+
+TEST$ = "C33 UPDATE bad col"
+GOSUB T_SHOW
+SQL_STMT$ = "UPDATE v1 SET nosuch=1 WHERE age>0"
+GOSUB T_EXEC
+WSTAT = 65
+GOSUB T_CKST
+
+TEST$ = "C34 bulk UPDATE AND"
+GOSUB T_SHOW
+SQL_STMT$ = "UPDATE v1 SET age=50 WHERE age=22 AND city=Chicago"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+SQL_STMT$ = "SELECT * FROM v1 WHERE KEY=r3"
+GOSUB T_EXEC
+WANT$ = "age=50": GOSUB T_CKCONT
+
+REM ---------- DELETE ----------
+TEST$ = "C35 INSERT r6"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r6 VALUES (Frank,40,Dallas)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+
+TEST$ = "C36 DELETE KEY"
+GOSUB T_SHOW
+SQL_STMT$ = "DELETE FROM v1 KEY r6"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+
+TEST$ = "C37 verify delete key"
+GOSUB T_SHOW
+SQL_STMT$ = "SELECT * FROM v1 WHERE KEY=r6"
+GOSUB T_EXEC
+WANT$ = ""
+GOT$ = SQL_RESULT$
+GOSUB T_CKEQ
+
+TEST$ = "C38 bulk DELETE"
+GOSUB T_SHOW
+SQL_STMT$ = "DELETE FROM v1 WHERE age=50"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+WANT$ = "DELETED 1"
+GOSUB T_CKMSG
+
+TEST$ = "C39 verify bulk delete"
+GOSUB T_SHOW
+SQL_STMT$ = "SELECT * FROM v1 WHERE KEY=r3"
+GOSUB T_EXEC
+WANT$ = ""
+GOT$ = SQL_RESULT$
+GOSUB T_CKEQ
+
+TEST$ = "C40 bulk DELETE zero"
+GOSUB T_SHOW
+SQL_STMT$ = "DELETE FROM v1 WHERE age=999"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+WANT$ = "DELETED 0"
+GOSUB T_CKMSG
+
+TEST$ = "C41 DELETE no clause"
+GOSUB T_SHOW
+SQL_STMT$ = "DELETE FROM v1 FOO"
+GOSUB T_EXEC
+WSTAT = 82
+GOSUB T_CKST
+
+REM ---------- REPLACE ----------
+REM ---------- summary ----------
+PRINT ""
+PRINT "VERIFY RESULTS"
+PRINT "PASS: "; PASS
+PRINT "FAIL: "; FAIL
+IF FAIL = 0 THEN PRINT "ALL CHECKS PASSED"
+IF FAIL > 0 THEN PRINT "THERE ARE FAILURES"
+END
+
+REM ==============================================================
+REM  Helper routines
+REM ==============================================================
+T_RUNSQL:
+    SQL_STATUS = 0
+    SQL_MSG$ = ""
+    SQL_RESULT$ = ""
+    CHAIN "minisql.bas"
+    RETURN
+
+T_EXEC:
+    SQL_CMD$ = "EXEC"
+    GOSUB T_RUNSQL
+    RETURN
+
+T_SHOW:
+    PRINT ".";
+    RETURN
+
+T_CKST:
+    IF SQL_STATUS = WSTAT THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL STATUS="; SQL_STATUS; " WANT="; WSTAT
+        PRINT "  MSG="; SQL_MSG$
+    END IF
+    RETURN
+
+T_CKEQ:
+    IF GOT$ = WANT$ THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL WANT=["; LEFT$(WANT$, 100); "]"
+        PRINT "  FAIL GOT =["; LEFT$(GOT$, 100); "]"
+    END IF
+    RETURN
+
+T_CKCONT:
+    IF INSTR(SQL_RESULT$, WANT$) > 0 THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL MISSING ["; LEFT$(WANT$, 100); "]"
+        PRINT "  RESULT=["; LEFT$(SQL_RESULT$, 100); "]"
+    END IF
+    RETURN
+
+T_CKMSG:
+    IF INSTR(SQL_MSG$, WANT$) > 0 THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL MSG MISSING ["; WANT$; "]"
+        PRINT "  MSG=["; SQL_MSG$; "]"
+    END IF
+    RETURN
+
+T_CKABS:
+    IF INSTR(SQL_RESULT$, WANT$) = 0 THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL FOUND ["; LEFT$(WANT$, 100); "]"
+        PRINT "  RESULT=["; LEFT$(SQL_RESULT$, 100); "]"
+    END IF
+    RETURN
+
+T_ROWS:
+    ROWCNT = LEN(SQL_RESULT$) - LEN(REPLACE$(SQL_RESULT$, LF$, ""))
+    RETURN
+
+T_OCC:
+    OCC = 0
+    IF LEN(WANT$) > 0 THEN
+        OCC = (LEN(SQL_RESULT$) - LEN(REPLACE$(SQL_RESULT$, WANT$, "")))
+        OCC = OCC / LEN(WANT$)
+    END IF
+    RETURN
+
+T_CKNUM:
+    IF GOTN = WANTN THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL NUM="; GOTN; " WANT="; WANTN
+        PRINT "  RESULT=["; LEFT$(SQL_RESULT$, 100); "]"
+    END IF
+    RETURN
+
+T_CKPOS:
+    IF GOTN > 0 AND WANTN > 0 AND GOTN < WANTN THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL POS "; GOTN; " NOT BEFORE "; WANTN
+        PRINT "  RESULT=["; LEFT$(SQL_RESULT$, 100); "]"
+    END IF
+    RETURN

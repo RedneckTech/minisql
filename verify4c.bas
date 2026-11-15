@@ -1,0 +1,267 @@
+REM ==============================================================
+REM  verify4c.bas   -   MiniSQL verification part
+REM  Checks SQL_RESULT$ contents and status codes for every
+REM  feature.  Prints one progress line per check, details on
+REM  failure, and a final PASS/FAIL summary.
+REM ==============================================================
+START:
+COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$
+COMMON SQL_STATUS, SQL_MSG$
+
+PASS = 0
+FAIL = 0
+LF$ = CHR$(10)
+SQL_DB$ = "VERIFY4C"
+SQL_MODE$ = "RW"
+SQL_CMD$ = "INITDB"
+GOSUB T_RUNSQL
+TEST$ = "C00 INITDB"
+GOSUB T_SHOW
+WSTAT = 0
+GOSUB T_CKST
+
+REM ---------- setup table v1 ----------
+TEST$ = "C00B CREATE v1"
+GOSUB T_SHOW
+SQL_STMT$ = "CREATE TABLE v1 (name,age,city) PK KEY"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00C INSERT r1"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r1 VALUES (Alice,25,Chicago)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00D INSERT r2"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r2 VALUES (Bob,30,Boston)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00E INSERT r3"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r3 VALUES (Carol,22,Chicago)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00F INSERT r4"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r4 VALUES (Dave,35,Denver)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00G INSERT r5"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO v1 KEY r5 VALUES (Eve,28,Austin)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+
+REM ---------- SELECT / WHERE ----------
+TEST$ = "C67 CREATE vs"
+GOSUB T_SHOW
+SQL_STMT$ = "CREATE TABLE vs (name,city,desc) PK KEY"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C68 INSERT s1"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO vs KEY s1 VALUES (Alice,Chicago,Hello World)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C69 INSERT s2"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO vs KEY s2 VALUES (Bob,Boston,Good Morning)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C70 INSERT s3"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO vs KEY s3 VALUES (Carol,Chicago,Hello Again)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+
+TEST$ = "C00H CREATE vseq"
+GOSUB T_SHOW
+SQL_STMT$ = "CREATE TABLE vseq (label) PK KEY"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C00I INSERT vseq key1"
+GOSUB T_SHOW
+SQL_STMT$ = "INSERT INTO vseq KEY 1 VALUES (one)"
+GOSUB T_EXEC
+WSTAT = 0
+GOSUB T_CKST
+TEST$ = "C88 DROP TABLE"
+GOSUB T_SHOW
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "DROP TABLE vs"
+GOSUB T_RUNSQL
+WSTAT = 0
+GOSUB T_CKST
+
+TEST$ = "C89 dropped gone"
+GOSUB T_SHOW
+SQL_STMT$ = "SELECT * FROM vs"
+GOSUB T_RUNSQL
+WSTAT = 51
+GOSUB T_CKST
+
+TEST$ = "C90 SHOW after drop"
+GOSUB T_SHOW
+SQL_STMT$ = "SHOW TABLES"
+GOSUB T_RUNSQL
+WANT$ = "vs" + LF$: GOSUB T_CKABS
+
+REM ---------- MODES ----------
+TEST$ = "C91 RO select"
+GOSUB T_SHOW
+SQL_MODE$ = "RO"
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "SELECT COUNT(*) FROM vseq"
+GOSUB T_RUNSQL
+WSTAT = 0
+GOSUB T_CKST
+
+TEST$ = "C92 RO write denied"
+GOSUB T_SHOW
+SQL_MODE$ = "RO"
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "INSERT INTO vseq KEY 20 VALUES (nope)"
+GOSUB T_RUNSQL
+WSTAT = 20
+GOSUB T_CKST
+
+TEST$ = "C93 AO insert"
+GOSUB T_SHOW
+SQL_MODE$ = "AO"
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "INSERT INTO vseq KEY 20 VALUES (twenty)"
+GOSUB T_RUNSQL
+WSTAT = 0
+GOSUB T_CKST
+
+TEST$ = "C94 AO select denied"
+GOSUB T_SHOW
+SQL_MODE$ = "AO"
+SQL_CMD$ = "EXEC"
+SQL_STMT$ = "SELECT * FROM vseq"
+GOSUB T_RUNSQL
+WSTAT = 21
+GOSUB T_CKST
+SQL_MODE$ = "RW"
+
+REM ---------- ERRORS ----------
+REM ---------- summary ----------
+PRINT ""
+PRINT "VERIFY RESULTS"
+PRINT "PASS: "; PASS
+PRINT "FAIL: "; FAIL
+IF FAIL = 0 THEN PRINT "ALL CHECKS PASSED"
+IF FAIL > 0 THEN PRINT "THERE ARE FAILURES"
+END
+
+REM ==============================================================
+REM  Helper routines
+REM ==============================================================
+T_RUNSQL:
+    SQL_STATUS = 0
+    SQL_MSG$ = ""
+    SQL_RESULT$ = ""
+    CHAIN "minisql.bas"
+    RETURN
+
+T_EXEC:
+    SQL_CMD$ = "EXEC"
+    GOSUB T_RUNSQL
+    RETURN
+
+T_SHOW:
+    PRINT ".";
+    RETURN
+
+T_CKST:
+    IF SQL_STATUS = WSTAT THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL STATUS="; SQL_STATUS; " WANT="; WSTAT
+        PRINT "  MSG="; SQL_MSG$
+    END IF
+    RETURN
+
+T_CKEQ:
+    IF GOT$ = WANT$ THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL WANT=["; LEFT$(WANT$, 100); "]"
+        PRINT "  FAIL GOT =["; LEFT$(GOT$, 100); "]"
+    END IF
+    RETURN
+
+T_CKCONT:
+    IF INSTR(SQL_RESULT$, WANT$) > 0 THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL MISSING ["; LEFT$(WANT$, 100); "]"
+        PRINT "  RESULT=["; LEFT$(SQL_RESULT$, 100); "]"
+    END IF
+    RETURN
+
+T_CKMSG:
+    IF INSTR(SQL_MSG$, WANT$) > 0 THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL MSG MISSING ["; WANT$; "]"
+        PRINT "  MSG=["; SQL_MSG$; "]"
+    END IF
+    RETURN
+
+T_CKABS:
+    IF INSTR(SQL_RESULT$, WANT$) = 0 THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL FOUND ["; LEFT$(WANT$, 100); "]"
+        PRINT "  RESULT=["; LEFT$(SQL_RESULT$, 100); "]"
+    END IF
+    RETURN
+
+T_ROWS:
+    ROWCNT = LEN(SQL_RESULT$) - LEN(REPLACE$(SQL_RESULT$, LF$, ""))
+    RETURN
+
+T_OCC:
+    OCC = 0
+    IF LEN(WANT$) > 0 THEN
+        OCC = (LEN(SQL_RESULT$) - LEN(REPLACE$(SQL_RESULT$, WANT$, "")))
+        OCC = OCC / LEN(WANT$)
+    END IF
+    RETURN
+
+T_CKNUM:
+    IF GOTN = WANTN THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL NUM="; GOTN; " WANT="; WANTN
+        PRINT "  RESULT=["; LEFT$(SQL_RESULT$, 100); "]"
+    END IF
+    RETURN
+
+T_CKPOS:
+    IF GOTN > 0 AND WANTN > 0 AND GOTN < WANTN THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL POS "; GOTN; " NOT BEFORE "; WANTN
+        PRINT "  RESULT=["; LEFT$(SQL_RESULT$, 100); "]"
+    END IF
+    RETURN
