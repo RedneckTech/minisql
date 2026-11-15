@@ -494,6 +494,26 @@ WB_LOADPAGE:
     IF ROWN > 0 THEN LASTKEY$ = ROWKEYS$(ROWN)
     RETURN
 
+WB_UPDATEROW:
+    REM IN: TBL$, RK$, VALS$
+    UERRLY = 0
+    SQL_STMT$ = "REPLACE " + TBL$ + " KEY " + RK$
+    SQL_STMT$ = SQL_STMT$ + " VALUES (" + VALS$ + ")"
+    IF LEN(SQL_STMT$) > 1800 THEN
+        ERR$ = "STATEMENT TOO LONG"
+        GOSUB WB_ERR
+        UERRLY = 1
+        RETURN
+    END IF
+    GOSUB WB_EXEC
+    RETURN
+
+WB_DELETEROW:
+    REM IN: TBL$, RK$
+    SQL_STMT$ = "DELETE FROM " + TBL$ + " KEY " + RK$
+    GOSUB WB_EXEC
+    RETURN
+
 
 REM ==============================================================
 REM  Link metadata (zzlinks)
@@ -1302,6 +1322,8 @@ SCR_BROWSE:
         GOSUB WB_LINE
         TEXT$ = "  Rows: " + TRIM$(STR$(ROWN))
         GOSUB WB_LINE
+        TEXT$ = "  " + STATUS$
+        GOSUB WB_LINE
         TEXT$ = ""
         GOSUB WB_LINE
         IF ROWN = 0 THEN
@@ -1313,8 +1335,6 @@ SCR_BROWSE:
                 GOSUB WB_LINE
             NEXT RI
         END IF
-        TEXT$ = ""
-        GOSUB WB_LINE
         GOSUB WB_FOOTER
         PROMPT$ = "Selection: "
         GOSUB WB_PROMPT
@@ -1376,6 +1396,70 @@ SCR_BROWSE:
                 SELROW = VN
                 GOSUB SCR_VIEW
             END IF
+        ELSEIF UCASE$(ANS$) = "E" THEN
+            PROMPT$ = "Row number: "
+            GOSUB WB_PROMPT
+            VN = VAL(TRIM$(ANS$))
+            IF VN < 1 OR VN > ROWN THEN
+                ERR$ = "BAD ROW NUMBER"
+                GOSUB WB_ERR
+            ELSE
+                SELROW = VN
+                GOSUB SCR_EDIT
+                PAGE = 1
+                LASTKEY$ = ""
+                GOSUB WB_LOADPAGE
+                PAGEKEYS$(1) = LASTKEY$
+            END IF
+        ELSEIF LEFT$(UCASE$(ANS$), 2) = "E " THEN
+            S$ = ANS$
+            D$ = " "
+            N = 2
+            GOSUB WB_GETTOK
+            VN = VAL(GETD$)
+            IF VN < 1 OR VN > ROWN THEN
+                ERR$ = "BAD ROW NUMBER"
+                GOSUB WB_ERR
+            ELSE
+                SELROW = VN
+                GOSUB SCR_EDIT
+                PAGE = 1
+                LASTKEY$ = ""
+                GOSUB WB_LOADPAGE
+                PAGEKEYS$(1) = LASTKEY$
+            END IF
+        ELSEIF UCASE$(ANS$) = "D" THEN
+            PROMPT$ = "Row number: "
+            GOSUB WB_PROMPT
+            VN = VAL(TRIM$(ANS$))
+            IF VN < 1 OR VN > ROWN THEN
+                ERR$ = "BAD ROW NUMBER"
+                GOSUB WB_ERR
+            ELSE
+                SELROW = VN
+                GOSUB SCR_DELETE
+                PAGE = 1
+                LASTKEY$ = ""
+                GOSUB WB_LOADPAGE
+                PAGEKEYS$(1) = LASTKEY$
+            END IF
+        ELSEIF LEFT$(UCASE$(ANS$), 2) = "D " THEN
+            S$ = ANS$
+            D$ = " "
+            N = 2
+            GOSUB WB_GETTOK
+            VN = VAL(GETD$)
+            IF VN < 1 OR VN > ROWN THEN
+                ERR$ = "BAD ROW NUMBER"
+                GOSUB WB_ERR
+            ELSE
+                SELROW = VN
+                GOSUB SCR_DELETE
+                PAGE = 1
+                LASTKEY$ = ""
+                GOSUB WB_LOADPAGE
+                PAGEKEYS$(1) = LASTKEY$
+            END IF
         ELSE
             ERR$ = "UNKNOWN SELECTION"
             GOSUB WB_ERR
@@ -1422,4 +1506,95 @@ SCR_VIEW:
     GOSUB WB_LINE
     GOSUB WB_FOOTER
     INPUT "Press ENTER...", X$
+    RETURN
+
+REM ==============================================================
+REM  Edit one row
+REM ==============================================================
+SCR_EDIT:
+    RK$ = ROWKEYS$(SELROW)
+    SQL_STMT$ = "SELECT * FROM " + TBL$ + " WHERE KEY=" + RK$
+    GOSUB WB_EXEC
+    IF SQL_STATUS <> 0 THEN
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    GOSUB WB_SPLIT
+    IF RESN = 0 THEN
+        ERR$ = "ROW NOT FOUND"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    ROWL$ = RESL$(1)
+    GOSUB WB_PARSEROW
+    GOSUB WB_CLS
+    TITLE$ = "MiniSQL Workbench"
+    FOOT$ = "Empty keeps; @ clears; @@ is @"
+    GOSUB WB_HEADER
+    TEXT$ = "  Edit " + TBL$ + "    Key: " + RK$
+    GOSUB WB_LINE
+    TEXT$ = ""
+    GOSUB WB_LINE
+    GOSUB WB_FOOTER
+    VALS$ = ""
+    CLEARED = 0
+    FOR CI = 1 TO COLNT
+        CUR$ = ""
+        FOR RJ = 1 TO RFN
+            IF RN$(RJ) = COLN$(CI) THEN CUR$ = RV$(RJ)
+        NEXT RJ
+        PROMPT$ = COLN$(CI) + " [" + CUR$ + "]: "
+        GOSUB WB_PROMPT
+        IF ANS$ = "@" THEN
+            VV$ = ""
+            CLEARED = 1
+        ELSEIF ANS$ = "@@" THEN
+            VV$ = "@"
+        ELSEIF ANS$ = "" THEN
+            VV$ = CUR$
+        ELSE
+            VV$ = TRIM$(ANS$)
+        END IF
+        V$ = VV$
+        GOSUB WB_VALVAL
+        IF VBAD = 1 THEN
+            ERR$ = "BAD VALUE"
+            GOSUB WB_ERR
+            RETURN
+        END IF
+        IF VALS$ <> "" THEN VALS$ = VALS$ + ","
+        VALS$ = VALS$ + VV$
+    NEXT CI
+    GOSUB WB_UPDATEROW
+    IF UERRLY = 1 THEN RETURN
+    IF SQL_STATUS <> 0 THEN
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    IF CLEARED = 1 THEN
+        STATUS$ = "Cleared"
+    ELSE
+        STATUS$ = "Updated"
+    END IF
+    RETURN
+
+
+REM ==============================================================
+REM  Delete one row
+REM ==============================================================
+SCR_DELETE:
+    RK$ = ROWKEYS$(SELROW)
+    PROMPT$ = "Delete row " + TRIM$(STR$(SELROW))
+    GOSUB WB_YES
+    IF YESNO = 0 THEN RETURN
+    GOSUB WB_DELETEROW
+    IF SQL_STATUS <> 0 THEN
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    STATUS$ = "Deleted"
+    RNEED = 1
     RETURN

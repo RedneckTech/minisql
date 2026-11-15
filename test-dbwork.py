@@ -270,6 +270,29 @@ SCENARIOS["browseempty"] = {
     "must_not": ["?SYNTAX"],
 }
 
+SCENARIOS["edit"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST7_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "pre": "wbfill",
+    "step_wait": 5.0,
+    "inputs": ["N", "WBTEST7", "1", "B", "E", "1", "alpha2", "",
+               "E", "1", "", "@",
+               "D", "1", "N", "D", "1", "Y"],
+    "must": ["Updated", "Cleared", "Deleted"],
+    "must_not": ["?SYNTAX", "?ILLEGAL", "?STRING"],
+    "final_must_not": ["k01"],
+}
+SCENARIOS["delcancel"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST7_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "pre": "wbfill",
+    "step_wait": 5.0,
+    "inputs": ["N", "WBTEST7", "1", "B", "D", "1", "N"],
+    "must": ["k01"],
+    "must_not": ["?SYNTAX", "UNKNOWN SELECTION"],
+    "final_must": ["k01"],
+}
+
 
 def main():
     names = sys.argv[1:] or ["smoke"]
