@@ -7,11 +7,17 @@ START:
     COMMON SQL_CMD$, SQL_DB$, SQL_STMT$, SQL_MODE$, SQL_RESULT$
     COMMON SQL_STATUS, SQL_MSG$
     DIM REG$(10)
+    DIM TBN$(50)
+    DIM TBC$(50)
+    DIM COLN$(40)
+    DIM RESL$(60)
+    DIM NEWC$(40)
     GOSUB WB_BOOT
     SCREEN = 1
     WHILE SCREEN <> 0
         IF SCREEN = 1 THEN GOSUB SCR_START
         IF SCREEN = 2 THEN GOSUB SCR_TABLES
+        IF SCREEN = 3 THEN GOSUB SCR_DESIGN
     WEND
     END
 
@@ -155,6 +161,170 @@ WB_CHECK:
         ERR$ = SQL_MSG$
         GOSUB WB_ERR
     END IF
+    RETURN
+
+
+REM ==============================================================
+REM  Parsers
+REM ==============================================================
+WB_GETTOK:
+    TMP$ = S$
+    P = 1
+    K = 1
+    WHILE 1
+        Q = INSTR(MID$(TMP$, P), D$)
+        IF Q = 0 THEN
+            PART$ = MID$(TMP$, P)
+        ELSE
+            PART$ = MID$(TMP$, P, Q-1)
+        END IF
+        IF K = N THEN
+            GETD$ = TRIM$(PART$)
+            RETURN
+        END IF
+        IF Q = 0 THEN
+            GETD$ = ""
+            RETURN
+        END IF
+        P = P + Q
+        K = K + 1
+    WEND
+    RETURN
+
+WB_SPLIT:
+    RESN = 0
+    POS = 1
+    WHILE POS <= LEN(SQL_RESULT$)
+        Q = INSTR(MID$(SQL_RESULT$, POS), CHR$(10))
+        IF Q = 0 THEN
+            L$ = MID$(SQL_RESULT$, POS)
+            POS = LEN(SQL_RESULT$) + 1
+        ELSE
+            L$ = MID$(SQL_RESULT$, POS, Q-1)
+            POS = POS + Q
+        END IF
+        IF L$ <> "" AND RESN < 60 THEN
+            RESN = RESN + 1
+            RESL$(RESN) = L$
+        END IF
+    WEND
+    RETURN
+
+WB_PARSEDESC:
+    DTBL$ = ""
+    DCOLS$ = ""
+    DPK$ = ""
+    POS = 1
+    FOR I = 1 TO 3
+        Q = INSTR(MID$(SQL_RESULT$, POS), CHR$(10))
+        IF Q = 0 THEN
+            L$ = MID$(SQL_RESULT$, POS)
+            POS = LEN(SQL_RESULT$) + 1
+        ELSE
+            L$ = MID$(SQL_RESULT$, POS, Q-1)
+            POS = POS + Q
+        END IF
+        IF LEFT$(L$, 4) = "TBL=" THEN DTBL$ = MID$(L$, 5)
+        IF LEFT$(L$, 5) = "COLS=" THEN DCOLS$ = MID$(L$, 6)
+        IF LEFT$(L$, 3) = "PK=" THEN DPK$ = MID$(L$, 4)
+    NEXT I
+    RETURN
+
+WB_PARSECOUNT:
+    CNT = VAL(MID$(SQL_RESULT$, 7))
+    RETURN
+
+
+REM ==============================================================
+REM  Table/column name validation
+REM  Letters, digits, '-' and '_'; no reserved words or LIMIT.
+REM ==============================================================
+WB_VALNAME:
+    VBAD = 0
+    IF V$ = "" THEN
+        VBAD = 1
+        RETURN
+    END IF
+    FOR VI = 1 TO LEN(V$)
+        VC$ = MID$(V$, VI, 1)
+        VOK = 0
+        IF VC$ >= "0" AND VC$ <= "9" THEN VOK = 1
+        IF UCASE$(VC$) >= "A" AND UCASE$(VC$) <= "Z" THEN VOK = 1
+        IF VC$ = "-" OR VC$ = "_" THEN VOK = 1
+        IF VOK = 0 THEN
+            VBAD = 1
+            RETURN
+        END IF
+    NEXT VI
+    VU$ = UCASE$(V$)
+    IF INSTR(VU$, "LIMIT") > 0 THEN VBAD = 1: RETURN
+    IF VU$ = "KEY" THEN VBAD = 1
+    IF VU$ = "ZZLINKS" THEN VBAD = 1
+    IF VU$ = "_SCHEMA_META" THEN VBAD = 1
+    IF VU$ = "INTO" THEN VBAD = 1
+    IF VU$ = "VALUES" THEN VBAD = 1
+    IF VU$ = "FROM" THEN VBAD = 1
+    IF VU$ = "WHERE" THEN VBAD = 1
+    IF VU$ = "SET" THEN VBAD = 1
+    IF VU$ = "TABLE" THEN VBAD = 1
+    IF VU$ = "ORDER" THEN VBAD = 1
+    IF VU$ = "LIKE" THEN VBAD = 1
+    IF VU$ = "AND" THEN VBAD = 1
+    IF VU$ = "OR" THEN VBAD = 1
+    IF VU$ = "DROP" THEN VBAD = 1
+    IF VU$ = "SHOW" THEN VBAD = 1
+    IF VU$ = "DESCRIBE" THEN VBAD = 1
+    IF VU$ = "ALTER" THEN VBAD = 1
+    IF VU$ = "PK" THEN VBAD = 1
+    RETURN
+
+
+REM ==============================================================
+REM  Load the table list and one table's columns
+REM ==============================================================
+WB_LOADTABLES:
+    TBNT = 0
+    SQL_STMT$ = "SHOW TABLES"
+    GOSUB WB_EXEC
+    IF SQL_STATUS <> 0 THEN
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    GOSUB WB_SPLIT
+    FOR TI = 1 TO RESN
+        L$ = RESL$(TI)
+        IF UCASE$(L$) <> "ZZLINKS" AND TBNT < 50 THEN
+            TBNT = TBNT + 1
+            TBN$(TBNT) = L$
+            SQL_STMT$ = "DESCRIBE " + L$
+            GOSUB WB_EXEC
+            IF SQL_STATUS = 0 THEN
+                GOSUB WB_PARSEDESC
+                TBC$(TBNT) = DCOLS$
+            ELSE
+                TBC$(TBNT) = ""
+            END IF
+        END IF
+    NEXT TI
+    RETURN
+
+WB_LOADCOLS:
+    COLNT = 0
+    CI = 1
+    WHILE 1
+        S$ = TCOLS$
+        D$ = ","
+        N = CI
+        GOSUB WB_GETTOK
+        C$ = GETD$
+        IF C$ = "" THEN RETURN
+        IF COLNT < 40 THEN
+            COLNT = COLNT + 1
+            COLN$(COLNT) = C$
+        END IF
+        CI = CI + 1
+    WEND
     RETURN
 
 
@@ -320,19 +490,29 @@ SCR_START:
 
 
 REM ==============================================================
-REM  Table list (Task 2 placeholder; Task 3 fills it)
+REM  Table list
 REM ==============================================================
 SCR_TABLES:
     GOSUB WB_CLS
     TITLE$ = "MiniSQL Workbench"
-    FOOT$ = "N=new table   M=map   S=SQL   Q=quit"
+    FOOT$ = "N=new table   M=map   S=SQL   R=refresh   Q=quit"
     GOSUB WB_HEADER
     TEXT$ = "  DB: " + DB$
     GOSUB WB_LINE
     TEXT$ = ""
     GOSUB WB_LINE
-    TEXT$ = "  No tables yet."
-    GOSUB WB_LINE
+    GOSUB WB_LOADTABLES
+    IF TBNT = 0 THEN
+        TEXT$ = "  No tables yet."
+        GOSUB WB_LINE
+    ELSE
+        FOR TI = 1 TO TBNT
+            TEXT$ = "  " + TRIM$(STR$(TI)) + "  " + TBN$(TI)
+            GOSUB WB_LINE
+            TEXT$ = "       " + TBC$(TI)
+            GOSUB WB_LINE
+        NEXT TI
+    END IF
     TEXT$ = ""
     GOSUB WB_LINE
     GOSUB WB_FOOTER
@@ -343,8 +523,10 @@ SCR_TABLES:
         RETURN
     END IF
     IF UCASE$(ANS$) = "N" THEN
-        ERR$ = "NEW TABLE IS NOT IMPLEMENTED YET"
-        GOSUB WB_ERR
+        GOSUB SCR_NEWTABLE
+        RETURN
+    END IF
+    IF UCASE$(ANS$) = "R" THEN
         RETURN
     END IF
     IF UCASE$(ANS$) = "M" THEN
@@ -355,6 +537,114 @@ SCR_TABLES:
     IF UCASE$(ANS$) = "S" THEN
         ERR$ = "SQL CONSOLE IS NOT IMPLEMENTED YET"
         GOSUB WB_ERR
+        RETURN
+    END IF
+    IF VAL(ANS$) >= 1 AND VAL(ANS$) <= TBNT THEN
+        TBL$ = TBN$(VAL(ANS$))
+        TCOLS$ = TBC$(VAL(ANS$))
+        SCREEN = 3
+        RETURN
+    END IF
+    ERR$ = "UNKNOWN SELECTION"
+    GOSUB WB_ERR
+    RETURN
+
+
+REM ==============================================================
+REM  New table
+REM ==============================================================
+SCR_NEWTABLE:
+    PROMPT$ = "Table name: "
+    GOSUB WB_PROMPT
+    TBL$ = LCASE$(TRIM$(ANS$))
+    IF UCASE$(TBL$) = "ZZLINKS" OR UCASE$(TBL$) = "_SCHEMA_META" THEN
+        ERR$ = "RESERVED"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    V$ = TBL$
+    GOSUB WB_VALNAME
+    IF VBAD = 1 THEN
+        ERR$ = "BAD TABLE NAME"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    PROMPT$ = "Columns (comma list): "
+    GOSUB WB_PROMPT
+    TCOLS$ = LCASE$(TRIM$(ANS$))
+    IF TCOLS$ = "" THEN
+        ERR$ = "BAD COLUMN LIST"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    NEWN = 0
+    CI = 1
+    MOREC = 1
+    WHILE MOREC = 1
+        S$ = TCOLS$
+        D$ = ","
+        N = CI
+        GOSUB WB_GETTOK
+        C$ = GETD$
+        IF C$ = "" THEN
+            MOREC = 0
+        ELSE
+            V$ = C$
+            GOSUB WB_VALNAME
+            IF VBAD = 1 THEN
+                ERR$ = "BAD COLUMN NAME"
+                GOSUB WB_ERR
+                RETURN
+            END IF
+            DUP = 0
+            FOR DI = 1 TO NEWN
+                IF NEWC$(DI) = C$ THEN DUP = 1
+            NEXT DI
+            IF DUP = 1 THEN
+                ERR$ = "DUPLICATE COLUMN"
+                GOSUB WB_ERR
+                RETURN
+            END IF
+            NEWN = NEWN + 1
+            NEWC$(NEWN) = C$
+            CI = CI + 1
+        END IF
+    WEND
+    SQL_STMT$ = "CREATE TABLE " + TBL$ + " (" + TCOLS$ + ") PK KEY"
+    IF LEN(SQL_STMT$) > 1800 THEN
+        ERR$ = "STATEMENT TOO LONG"
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    GOSUB WB_EXEC
+    IF SQL_STATUS <> 0 THEN
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
+        RETURN
+    END IF
+    SCREEN = 3
+    RETURN
+
+
+REM ==============================================================
+REM  Table design (Task 3 placeholder; Task 4 fills it)
+REM ==============================================================
+SCR_DESIGN:
+    GOSUB WB_CLS
+    TITLE$ = "MiniSQL Workbench"
+    FOOT$ = "B=back"
+    GOSUB WB_HEADER
+    TEXT$ = "  Table: " + TBL$
+    GOSUB WB_LINE
+    TEXT$ = "  Columns: " + TCOLS$
+    GOSUB WB_LINE
+    TEXT$ = ""
+    GOSUB WB_LINE
+    GOSUB WB_FOOTER
+    PROMPT$ = "Selection: "
+    GOSUB WB_PROMPT
+    IF UCASE$(ANS$) = "B" THEN
+        SCREEN = 2
         RETURN
     END IF
     ERR$ = "UNKNOWN SELECTION"

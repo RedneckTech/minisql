@@ -184,6 +184,21 @@ SCENARIOS["recent"] = {
     "must_not": ["?SYNTAX"],
 }
 
+SCENARIOS["tables"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST2_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": ["N", "WBTEST2",
+               "N", "customers", "id,name,email,city", "B",
+               "N", "orders", "id,customer_id,date,status", "B",
+               "N", "zzlinks", "",
+               "N", "bad", "credit_limit,x", "",
+               "N", "bad name", "a,b", ""],
+    "must": ["customers", "id,name,email,city", "orders", "id,customer_id,date,status",
+             "RESERVED", "BAD COLUMN NAME", "BAD TABLE NAME"],
+    "must_not": ["?SYNTAX", "?ILLEGAL"],
+    "final_must_not": ["zzlinks", "bad name"],
+}
+
 
 def main():
     names = sys.argv[1:] or ["smoke"]
