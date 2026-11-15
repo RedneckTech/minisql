@@ -161,6 +161,30 @@ SCENARIOS["smoke"] = {
 }
 
 
+SCENARIOS["open"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST1_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": ["N", "WBTEST1"],
+    "must": ["DB: WBTEST1", "No tables yet", "N=new table"],
+    "must_not": ["?SYNTAX", "?ILLEGAL", "?FILE NOT FOUND"],
+}
+SCENARIOS["openlong"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/ABCDEF*"],
+    "inputs": ["N", "ABCDEFGHIJKLMNOPQRSTUVWX"],
+    "must": ["DATABASE NAME TOO LONG"],
+    "must_not": ["?ILLEGAL", "READY"],
+}
+
+SCENARIOS["recent"] = {
+    "prog": "dbwork",
+    "setup": [],
+    "inputs": [],
+    "must": ["WBTEST1"],
+    "must_not": ["?SYNTAX"],
+}
+
+
 def main():
     names = sys.argv[1:] or ["smoke"]
     failed = 0
