@@ -22,7 +22,7 @@ START:
     DIM TGTCOL$(40)
     DIM ROWKEYS$(15)
     DIM ROWLINES$(15)
-    DIM PAGEKEYS$(20)
+    DIM PAGEKEYS$(700)
     DIM RN$(40)
     DIM RV$(40)
     DIM MAPL$(100)
@@ -329,6 +329,7 @@ WB_VALNAME:
     NEXT VI
     VU$ = UCASE$(V$)
     IF INSTR(VU$, "LIMIT") > 0 THEN VBAD = 1: RETURN
+    IF INSTR(VU$, "FROM") > 0 THEN VBAD = 1: RETURN
     IF VU$ = "KEY" THEN VBAD = 1
     IF VU$ = "ZZLINKS" THEN VBAD = 1
     IF VU$ = "_SCHEMA_META" THEN VBAD = 1
@@ -392,6 +393,7 @@ WB_LOADTABLES:
         GOSUB WB_ERR
         RETURN
     END IF
+    X = SLEEP(0.25)
     GOSUB WB_SPLIT
     FOR TI = 1 TO RESN
         L$ = RESL$(TI)
@@ -401,11 +403,20 @@ WB_LOADTABLES:
             SQL_STMT$ = "DESCRIBE " + L$
             GOSUB WB_EXEC
             IF SQL_STATUS = 0 THEN
-                GOSUB WB_PARSEDESC
-                TBC$(TBNT) = DCOLS$
+                IF LEN(SQL_RESULT$) > 2000 THEN
+                    TBC$(TBNT) = ""
+                    ERR$ = "DESCRIBE TOO LONG"
+                    GOSUB WB_ERR
+                ELSE
+                    GOSUB WB_PARSEDESC
+                    TBC$(TBNT) = DCOLS$
+                END IF
             ELSE
                 TBC$(TBNT) = ""
+                ERR$ = SQL_MSG$
+                GOSUB WB_ERR
             END IF
+            X = SLEEP(0.25)
         END IF
     NEXT TI
     RETURN
@@ -437,6 +448,8 @@ WB_COUNTROWS:
         ROWS = CNT
     ELSE
         ROWS = 0
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
     END IF
     RETURN
 
@@ -473,6 +486,9 @@ WB_INSERTROW:
 WB_LOADPAGE:
     IF PAGE <= 1 THEN
         SQL_STMT$ = "SELECT * FROM " + TBL$
+        IF STARTKEY$ <> "" THEN
+            SQL_STMT$ = SQL_STMT$ + " WHERE key>=" + STARTKEY$
+        END IF
         SQL_STMT$ = SQL_STMT$ + " LIMIT " + TRIM$(STR$(PAGESZ))
     ELSE
         SQL_STMT$ = "SELECT * FROM " + TBL$
@@ -481,7 +497,11 @@ WB_LOADPAGE:
     END IF
     GOSUB WB_EXEC
     ROWN = 0
-    IF SQL_STATUS <> 0 THEN RETURN
+    IF SQL_STATUS <> 0 THEN
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
+        RETURN
+    END IF
     GOSUB WB_SPLIT
     FOR RI = 1 TO RESN
         IF ROWN < PAGESZ THEN
@@ -793,6 +813,8 @@ WB_LOADLINKS:
     GOSUB WB_EXEC
     IF SQL_STATUS <> 0 THEN
         LNKT = 0
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
         RETURN
     END IF
     GOSUB WB_SPLIT
@@ -886,6 +908,7 @@ WB_CLEANLINKS:
             LK$ = LNKKEY$(LI)
             GOSUB WB_DELLINK
             IF SQL_STATUS = 0 THEN CLNDEL = CLNDEL + 1
+            X = SLEEP(0.25)
         END IF
     NEXT LI
     LLOADED = 0
@@ -911,6 +934,8 @@ WB_OPENDB:
         GOSUB WB_ERR
         RETURN
     END IF
+    SQL_STATUS = 0
+    SQL_MSG$ = ""
     GOSUB WB_ADDREG
     GOSUB WB_WRITEREG
     TBL$ = ""
@@ -1000,19 +1025,6 @@ SCR_START:
     GOSUB WB_HEADER
     TEXT$ = ""
     GOSUB WB_LINE
-    TEXT$ = "  Recent databases:"
-    GOSUB WB_LINE
-    IF REGN = 0 THEN
-        TEXT$ = "    (none)"
-        GOSUB WB_LINE
-    ELSE
-        FOR I = 1 TO REGN
-            TEXT$ = "    " + TRIM$(STR$(I)) + ". " + REG$(I)
-            GOSUB WB_LINE
-        NEXT I
-    END IF
-    TEXT$ = ""
-    GOSUB WB_LINE
     TEXT$ = "  Design and edit MiniSQL databases."
     GOSUB WB_LINE
     TEXT$ = ""
@@ -1020,7 +1032,7 @@ SCR_START:
     GOSUB WB_SEP
     TEXT$ = "  N = new database   S = sample SHOP database"
     GOSUB WB_LINE
-    TEXT$ = "  ? = help   Q = quit"
+    TEXT$ = "  L = recent databases   ? = help   Q = quit"
     GOSUB WB_LINE
     GOSUB WB_BOT
     PROMPT$ = "Selection: "
@@ -1045,6 +1057,10 @@ SCR_START:
         GOSUB SCR_SEED
         RETURN
     END IF
+    IF UCASE$(ANS$) = "L" THEN
+        GOSUB SCR_RECENT
+        RETURN
+    END IF
     IF ANS$ = "?" THEN
         GOSUB SCR_HELP
         RETURN
@@ -1065,6 +1081,43 @@ SCR_START:
 
 
 REM ==============================================================
+REM  Recent databases
+REM ==============================================================
+SCR_RECENT:
+    GOSUB WB_CLS
+    TITLE$ = "MiniSQL Workbench"
+    FOOT$ = "Number to open   B=back"
+    GOSUB WB_HEADER
+    TEXT$ = "  Recent databases:"
+    GOSUB WB_LINE
+    IF REGN = 0 THEN
+        TEXT$ = "    (none)"
+        GOSUB WB_LINE
+    ELSE
+        FOR I = 1 TO REGN
+            TEXT$ = "    " + TRIM$(STR$(I)) + "  " + REG$(I)
+            GOSUB WB_LINE
+        NEXT I
+    END IF
+    TEXT$ = ""
+    GOSUB WB_LINE
+    GOSUB WB_FOOTER
+    PROMPT$ = "Selection: "
+    GOSUB WB_PROMPT
+    IF ANS$ = "" OR UCASE$(ANS$) = "B" THEN RETURN
+    IF VAL(ANS$) >= 1 AND VAL(ANS$) <= REGN THEN
+        DB$ = REG$(VAL(ANS$))
+        GOSUB WB_VALDB
+        IF DBBAD = 1 THEN
+            GOSUB WB_ERR
+            RETURN
+        END IF
+        GOSUB WB_OPENDB
+    END IF
+    RETURN
+
+
+REM ==============================================================
 REM  Table list
 REM ==============================================================
 SCR_TABLES:
@@ -1073,6 +1126,8 @@ SCR_TABLES:
     FOOT$ = "N=new table   M=map   S=SQL   R=refresh   Q=quit"
     GOSUB WB_HEADER
     TEXT$ = "  DB: " + DB$
+    GOSUB WB_LINE
+    TEXT$ = "  " + STATUS$
     GOSUB WB_LINE
     TEXT$ = ""
     GOSUB WB_LINE
@@ -1089,6 +1144,7 @@ SCR_TABLES:
             GOSUB WB_LINE
             TEXT$ = "       " + TBC$(TI)
             GOSUB WB_LINE
+            IF (TI MOD 5) = 0 THEN X = SLEEP(0.1)
         NEXT TI
     END IF
     TEXT$ = ""
@@ -1101,6 +1157,11 @@ SCR_TABLES:
         RETURN
     END IF
     IF UCASE$(ANS$) = "N" THEN
+        IF TBNT >= 50 THEN
+            ERR$ = "50 TABLE LIMIT"
+            GOSUB WB_ERR
+            RETURN
+        END IF
         GOSUB SCR_NEWTABLE
         RETURN
     END IF
@@ -1183,6 +1244,11 @@ SCR_NEWTABLE:
             NEXT DI
             IF DUP = 1 THEN
                 ERR$ = "DUPLICATE COLUMN"
+                GOSUB WB_ERR
+                RETURN
+            END IF
+            IF NEWN >= 40 THEN
+                ERR$ = "40 COLUMN LIMIT"
                 GOSUB WB_ERR
                 RETURN
             END IF
@@ -1287,6 +1353,11 @@ WB_LINKADD:
         GOSUB WB_ERR
         RETURN
     END IF
+    IF LNKT >= 30 THEN
+        ERR$ = "30 LINK LIMIT"
+        GOSUB WB_ERR
+        RETURN
+    END IF
     GOSUB WB_SAVELINK
     IF SQL_STATUS <> 0 THEN
         ERR$ = SQL_MSG$
@@ -1314,7 +1385,7 @@ SCR_DESIGN:
     GOSUB WB_LINKSFOR
     GOSUB WB_CLS
     TITLE$ = "MiniSQL Workbench"
-    FOOT$ = "A=add D n=drop L=link X n=unlink T=drop B=rows Q=back"
+    FOOT$ = "A=add D=drop L=link X=unlink R=refr T=drop B=rows Q=back"
     GOSUB WB_HEADER
     TEXT$ = "  Table: " + TBL$
     GOSUB WB_LINE
@@ -1347,6 +1418,21 @@ SCR_DESIGN:
     GOSUB WB_FOOTER
     PROMPT$ = "Selection: "
     GOSUB WB_PROMPT
+    IF UCASE$(ANS$) = "R" THEN
+        SQL_STMT$ = "DESCRIBE " + TBL$
+        GOSUB WB_EXEC
+        IF SQL_STATUS = 0 THEN
+            GOSUB WB_PARSEDESC
+            TCOLS$ = DCOLS$
+            TPK$ = DPK$
+        ELSE
+            ERR$ = SQL_MSG$
+            GOSUB WB_ERR
+        END IF
+        LLOADED = 0
+        RNEED = 1
+        RETURN
+    END IF
     IF UCASE$(ANS$) = "Q" THEN
         SCREEN = 2
         RETURN
@@ -1358,6 +1444,11 @@ SCR_DESIGN:
         RETURN
     END IF
     IF UCASE$(ANS$) = "A" THEN
+        IF COLNT >= 40 THEN
+            ERR$ = "40 COLUMN LIMIT"
+            GOSUB WB_ERR
+            RETURN
+        END IF
         PROMPT$ = "New column: "
         GOSUB WB_PROMPT
         V$ = LCASE$(TRIM$(ANS$))
@@ -1418,7 +1509,20 @@ SCR_DESIGN:
             RETURN
         END IF
         DCOL$ = COLN$(DN)
+        LNKCNT = 0
+        FOR LI = 1 TO LNKT
+            IF LNKF$(LI) = TBL$ AND LNKFK$(LI) = DCOL$ THEN
+                LNKCNT = LNKCNT + 1
+            END IF
+            IF LNKTT$(LI) = TBL$ AND LNKTC$(LI) = DCOL$ THEN
+                LNKCNT = LNKCNT + 1
+            END IF
+        NEXT LI
         PROMPT$ = "Drop column " + DCOL$
+        IF LNKCNT > 0 THEN
+            PROMPT$ = PROMPT$ + " (" + TRIM$(STR$(LNKCNT))
+            PROMPT$ = PROMPT$ + " links)"
+        END IF
         GOSUB WB_YES
         IF YESNO = 1 THEN
             GOSUB WB_DROPCOL
@@ -1462,7 +1566,11 @@ SCR_DESIGN:
         ELSE
             DCOL$ = ""
             GOSUB WB_CLEANLINKS
-            STATUS$ = ""
+            STATUS$ = "Table dropped"
+            IF CLNDEL > 0 THEN
+                STATUS$ = STATUS$ + " (" + TRIM$(STR$(CLNDEL))
+                STATUS$ = STATUS$ + " links)"
+            END IF
             TLOADED = 0
             SCREEN = 2
         END IF
@@ -1532,7 +1640,7 @@ SCR_INSERT:
             GOSUB WB_ERR
             RETURN
         END IF
-        IF VALS$ <> "" THEN VALS$ = VALS$ + ","
+        IF CI > 1 THEN VALS$ = VALS$ + ","
         VALS$ = VALS$ + V$
     NEXT CI
     GOSUB WB_INSERTROW
@@ -1555,13 +1663,14 @@ REM ==============================================================
 SCR_BROWSE:
     PAGE = 1
     LASTKEY$ = ""
+    STARTKEY$ = ""
     GOSUB WB_LOADPAGE
     PAGEKEYS$(1) = LASTKEY$
     MOREBR = 1
     WHILE MOREBR = 1
         GOSUB WB_CLS
         TITLE$ = "MiniSQL Workbench"
-        FOOT$ = "N=next  P=prev  V n=view  I=insert  B=back"
+        FOOT$ = "N=next P=prev V=view E=edit D=del I=ins K=key B=back"
         GOSUB WB_HEADER
         TEXT$ = "  Table: " + TBL$ + "    Page "
         TEXT$ = TEXT$ + TRIM$(STR$(PAGE))
@@ -1612,6 +1721,38 @@ SCR_BROWSE:
             END IF
             GOSUB WB_LOADPAGE
             PAGEKEYS$(PAGE) = LASTKEY$
+        ELSEIF UCASE$(ANS$) = "K" THEN
+            PROMPT$ = "Key: "
+            GOSUB WB_PROMPT
+            V$ = TRIM$(ANS$)
+            GOSUB WB_VALKEY
+            IF VBAD = 1 THEN
+                ERR$ = "BAD KEY"
+                GOSUB WB_ERR
+            ELSE
+                STARTKEY$ = V$
+                PAGE = 1
+                LASTKEY$ = ""
+                GOSUB WB_LOADPAGE
+                PAGEKEYS$(1) = LASTKEY$
+            END IF
+        ELSEIF LEFT$(UCASE$(ANS$), 2) = "K " THEN
+            S$ = ANS$
+            D$ = " "
+            N = 2
+            GOSUB WB_GETTOK
+            V$ = GETD$
+            GOSUB WB_VALKEY
+            IF VBAD = 1 THEN
+                ERR$ = "BAD KEY"
+                GOSUB WB_ERR
+            ELSE
+                STARTKEY$ = V$
+                PAGE = 1
+                LASTKEY$ = ""
+                GOSUB WB_LOADPAGE
+                PAGEKEYS$(1) = LASTKEY$
+            END IF
         ELSEIF UCASE$(ANS$) = "I" THEN
             GOSUB SCR_INSERT
             PAGE = 1
@@ -1809,7 +1950,7 @@ SCR_EDIT:
             GOSUB WB_ERR
             RETURN
         END IF
-        IF VALS$ <> "" THEN VALS$ = VALS$ + ","
+        IF CI > 1 THEN VALS$ = VALS$ + ","
         VALS$ = VALS$ + VV$
     NEXT CI
     GOSUB WB_UPDATEROW
@@ -1961,6 +2102,9 @@ SCR_SQL:
                     ELSEIF SQL_RESULT$ <> "" THEN
                         GOSUB WB_SHOWRESULT
                     END IF
+                    TLOADED = 0
+                    LLOADED = 0
+                    RNEED = 1
                 END IF
                 INPUT "Press ENTER...", X$
             END IF

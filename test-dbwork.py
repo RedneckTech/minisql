@@ -25,8 +25,9 @@ SCENARIOS = {}
 
 GLOBAL_BAD = ["?SYNTAX", "?UNDEFINED", "?ILLEGAL", "?STRING", "?REDO",
               "?DIVISION", "?OUT OF", "?NEXT WITHOUT", "?INPUT PAST END",
-              "?EXECUTION",
-              "?FILE NOT FOUND"]
+              "?FILE NOT FOUND", "?EXECUTION", "?SUBSCRIPT",
+              "?TYPE MISMATCH", "?RETURN WITHOUT GOSUB",
+              "?FOR WITHOUT NEXT", "?WHILE WITHOUT WEND"]
 
 
 def xstr(s):
@@ -81,8 +82,11 @@ def run_session(prog, inputs, must, must_not, final_must=None,
         )
 
         def send(action, delay=0.6):
-            p.stdin.write(action + "\n")
-            p.stdin.flush()
+            try:
+                p.stdin.write(action + "\n")
+                p.stdin.flush()
+            except (BrokenPipeError, OSError):
+                return
             time.sleep(delay)
 
         def ascii(delay=0.8):
@@ -125,7 +129,6 @@ def run_session(prog, inputs, must, must_not, final_must=None,
         send(xstr("run"), 0.5)
         send("Enter", 0.3)
         send("Wait(30,Output)", 3.0)
-        send("Tab", 0.5)
 
         for item in inputs:
             if item is None:
@@ -196,7 +199,7 @@ SCENARIOS["openlong"] = {
 SCENARIOS["recent"] = {
     "prog": "dbwork",
     "setup": [],
-    "inputs": [],
+    "inputs": ["L"],
     "must": ["WBTEST1"],
     "must_not": ["?SYNTAX"],
 }
@@ -209,11 +212,12 @@ SCENARIOS["tables"] = {
                "N", "orders", "id,customer_id,date,status", "Q",
                "N", "zzlinks", "",
                "N", "bad", "credit_limit,x", "",
+               "N", "bad2", "fromage,x", "",
                "N", "bad name", "a,b", ""],
     "must": ["customers", "id,name,email,city", "orders", "id,customer_id,date,status",
              "RESERVED", "BAD COLUMN NAME", "BAD TABLE NAME"],
     "must_not": ["?SYNTAX", "?ILLEGAL"],
-    "final_must_not": ["zzlinks", "bad name"],
+    "final_must_not": ["zzlinks", "bad name", "bad2"],
 }
 
 SCENARIOS["design"] = {
@@ -274,9 +278,10 @@ SCENARIOS["browse"] = {
     "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST7_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
     "pre": "wbfill",
     "step_wait": 5.0,
-    "inputs": ["N", "WBTEST7", "1", "B", "V", "1", "", "N", "N", "P"],
-    "must": ["Page 1", "k01", "k15", "Page 2", "k16", "Page 3", "k31", "k40", "label1"],
+    "inputs": ["N", "WBTEST7", "1", "B", "V", "1", "", "N", "N", "P", "K", "k20"],
+    "must": ["Page 1", "k01", "k15", "Page 2", "k16", "Page 3", "k31", "k40", "label1", "k20"],
     "must_not": ["?SYNTAX", "?ILLEGAL", "?STRING"],
+    "final_must": ["k20"],
 }
 SCENARIOS["browseempty"] = {
     "prog": "dbwork",
@@ -333,8 +338,9 @@ SCENARIOS["sql"] = {
                "SHOW TABLES", "",
                "DROP TABLE zzlinks", "",
                "FOO", "",
-               "B"],
-    "must": ["COUNT=1", "COLS=label,val", "items", "zzlinks", "RESERVED", "UNSUPPORTED SQL"],
+               "ALTER TABLE items ADD extra", "",
+               "B", "1"],
+    "must": ["COUNT=1", "COLS=label,val", "items", "zzlinks", "RESERVED", "UNSUPPORTED SQL", "extra"],
     "must_not": ["?SYNTAX", "?ILLEGAL"],
 }
 
@@ -342,9 +348,9 @@ SCENARIOS["seed"] = {
     "prog": "dbwork",
     "setup": ["rm -f ~/3270BBS/basic/admin/SHOP_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
     "step_wait": 35.0,
-    "inputs": ["S", "M"],
+    "inputs": ["S", "M", "B", "1"],
     "must": ["SHOP", "customers", "products", "orders", "order_lines",
-             "suppliers", "shipments", "Tables: 6", "Links: 5"],
+             "suppliers", "shipments", "Tables: 6", "Links: 5", "Rows: 2"],
     "must_not": ["?SYNTAX", "?ILLEGAL", "?STRING"],
 }
 SCENARIOS["seedmerge"] = {
@@ -395,8 +401,11 @@ def run_check():
         )
 
         def send(action, delay=0.6):
-            p.stdin.write(action + "\n")
-            p.stdin.flush()
+            try:
+                p.stdin.write(action + "\n")
+                p.stdin.flush()
+            except (BrokenPipeError, OSError):
+                return
             time.sleep(delay)
 
         send("Wait(10,Output)", 1.5)
@@ -435,6 +444,44 @@ def run_check():
     if r.returncode != 0:
         problems.append("dbwork.list lacks TOTAL ERRORS: 0")
     return problems
+
+SCENARIOS["emptyval"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST4E_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "step_wait": 4.0,
+    "inputs": ["N", "WBTEST4E", "N", "items", "label,val",
+               "I", "e1", "", "x", "B"],
+    "must": ["label=  val=x"],
+    "must_not": ["label=x", "?SYNTAX", "?ILLEGAL"],
+}
+SCENARIOS["emptyedit"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST4F_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "step_wait": 4.0,
+    "inputs": ["N", "WBTEST4F", "N", "items", "label,val",
+               "I", "e1", "", "x", "B", "E", "1", "", "y"],
+    "must": ["label=  val=y"],
+    "must_not": ["label=y", "?SYNTAX", "?ILLEGAL"],
+}
+
+SCENARIOS["col41"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST9_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "pre": "wbwide",
+    "step_wait": 5.0,
+    "inputs": ["N", "WBTEST9", "1", "A"],
+    "must": ["40 COLUMN LIMIT"],
+    "must_not": ["?SUBSCRIPT", "?SYNTAX"],
+}
+SCENARIOS["manytables"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST8_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "pre": "wbmany",
+    "step_wait": 35.0,
+    "inputs": ["N", "WBTEST8"],
+    "must": ["t25"],
+    "must_not": ["?EXECUTION", "?SUBSCRIPT"],
+}
 
 
 def main():
