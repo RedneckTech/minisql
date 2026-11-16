@@ -171,7 +171,7 @@ def run_session(prog, inputs, must, must_not, final_must=None,
 
 SCENARIOS["smoke"] = {
     "prog": "dbwork",
-    "setup": [],
+    "setup": ["rm -f ~/3270BBS/basic/admin/dbwork.dat"],
     "inputs": ["Q"],
     "must": ["MiniSQL Workbench", "N = new database", "Q = quit"],
     "must_not": ["?SYNTAX", "?UNDEFINED", "ERROR"],
@@ -368,7 +368,7 @@ SCENARIOS["batch"] = {
 
 SCENARIOS["help"] = {
     "prog": "dbwork",
-    "setup": [],
+    "setup": ["rm -f ~/3270BBS/basic/admin/dbwork.dat"],
     "inputs": ["?", "", "Q"],
     "must": ["Limits:", "50 tables", "Values reject comma"],
     "must_not": ["?SYNTAX"],
@@ -465,6 +465,7 @@ def main():
             failed += 1
         else:
             print("PASS %s" % name)
+        time.sleep(3.0)
     sys.exit(1 if failed else 0)
 
 
