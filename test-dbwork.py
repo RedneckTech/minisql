@@ -67,7 +67,7 @@ def parse_screens(path):
 
 
 def run_session(prog, inputs, must, must_not, final_must=None,
-                final_must_not=None, pre=None, step_wait=3.0):
+                final_must_not=None, pre=None, step_wait=3.0, pages=0):
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
     stage(prog + ".bas")
     if pre:
@@ -125,6 +125,7 @@ def run_session(prog, inputs, must, must_not, final_must=None,
         send(xstr("run"), 0.5)
         send("Enter", 0.3)
         send("Wait(30,Output)", 3.0)
+        send("Tab", 0.5)
 
         for item in inputs:
             if item is None:
@@ -133,6 +134,10 @@ def run_session(prog, inputs, must, must_not, final_must=None,
             if item != "":
                 send(xstr(item), 0.3)
             send("Enter", step_wait)
+            ascii()
+
+        for _ in range(pages):
+            send("Enter", 4.0)
             ascii()
 
         send("Ascii", 1.0)
@@ -351,11 +356,99 @@ SCENARIOS["seedmerge"] = {
     "must_not": ["?SYNTAX", "?ILLEGAL"],
 }
 
+SCENARIOS["batch"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST6_* ~/3270BBS/basic/admin/dbwork.dat",
+              "printf 'BEGIN\\n' > ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": ["N", "WBTEST6", "N", "items", "label,val",
+               "I", "", "alpha", "100"],
+    "must": ["Inserted"],
+    "must_not": ["QUEUED", "?SYNTAX", "?ILLEGAL"],
+}
+
+SCENARIOS["help"] = {
+    "prog": "dbwork",
+    "setup": [],
+    "inputs": ["?", "", "Q"],
+    "must": ["Limits:", "50 tables", "Values reject comma"],
+    "must_not": ["?SYNTAX"],
+}
+
+SCENARIOS["regression"] = {
+    "prog": "test-runner",
+    "setup": ["rm -f ~/3270BBS/basic/admin/TESTSUITE_* ~/3270BBS/basic/admin/TSTINITDB_* ~/3270BBS/basic/admin/batch.dat"],
+    "inputs": [],
+    "pages": 16,
+    "must": ["PASS: 14", "FAIL: 0"],
+    "must_not": ["?SYNTAX"],
+}
+
+def run_check():
+    """Load dbwork, run CHECK, assert no errors in the screen and listing."""
+    os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
+    stage("dbwork.bas")
+    with open(OUT_PATH, "w") as out:
+        p = subprocess.Popen(
+            ["x3270", "-script", "-model", "3279-2", HOST],
+            stdin=subprocess.PIPE, stdout=out, stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        def send(action, delay=0.6):
+            p.stdin.write(action + "\n")
+            p.stdin.flush()
+            time.sleep(delay)
+
+        send("Wait(10,Output)", 1.5)
+        send(xstr("admin"), 0.3)
+        send("Tab", 0.3)
+        send(xstr("admin"), 0.3)
+        send("Enter", 4.0)
+        send("PF(3)", 3.0)
+        send(xstr("m"), 0.4)
+        send("Enter", 3.0)
+        send(xstr("b"), 0.4)
+        send("Enter", 0.3)
+        send("Wait(20,Output)", 2.0)
+        send(xstr('load "dbwork"'), 0.5)
+        send("Enter", 0.3)
+        send("Wait(20,Output)", 2.0)
+        send(xstr("check"), 0.5)
+        send("Enter", 0.3)
+        send("Wait(40,Output)", 3.0)
+        send("Ascii", 1.0)
+        send("Quit", 0.5)
+        try:
+            p.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+    screens = parse_screens(OUT_PATH)
+    text = "\n".join(screens)
+    problems = []
+    if "ERROR(S) FOUND" in text:
+        problems.append("CHECK reports errors")
+    r = subprocess.run(
+        ["ssh", BBS, "grep 'TOTAL ERRORS: 0' %s/dbwork.list" % ADMIN],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        problems.append("dbwork.list lacks TOTAL ERRORS: 0")
+    return problems
+
 
 def main():
     names = sys.argv[1:] or ["smoke"]
     failed = 0
     for name in names:
+        if name == "check":
+            problems = run_check()
+            if problems:
+                print("FAIL check: %s" % "; ".join(problems))
+                failed += 1
+            else:
+                print("PASS check")
+            continue
         sc = SCENARIOS.get(name)
         if sc is None:
             print("FAIL %s: no such scenario" % name)
@@ -365,7 +458,7 @@ def main():
         problems = run_session(
             sc["prog"], sc["inputs"], sc["must"], sc["must_not"],
             sc.get("final_must"), sc.get("final_must_not"),
-            sc.get("pre"), sc.get("step_wait", 3.0),
+            sc.get("pre"), sc.get("step_wait", 3.0), sc.get("pages", 0),
         )
         if problems:
             print("FAIL %s: %s" % (name, "; ".join(problems)))

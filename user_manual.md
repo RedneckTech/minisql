@@ -906,12 +906,45 @@ Possible causes:
 
 ---
 
+## MiniSQL Workbench (dbwork.bas)
+
+`dbwork.bas` is a screen-based database designer/viewer/editor. It runs
+from the BASIC prompt (`load "dbwork"`, `run`) and chains into
+`minisql.bas` for every operation.
+
+Screens and keys:
+
+- **Start** - recent databases (`dbwork.dat`), `N` open/create, `S` seed
+  the sample SHOP database, `?` help/limits, `Q` quit.
+- **Tables** - numbered list with columns; `N` new table, `M` map, `S`
+  SQL console, `R` refresh, `Q` quit.
+- **Design** - `A` add column, `D` drop column (prompts for the number),
+  `L` add link, `X` unlink, `T` drop table (type the name), `B` browse
+  rows, `Q` back.
+- **Rows** - `N`/`P` page, `V n` view, `E n` edit, `D n` delete,
+  `I` insert, `B` back.
+- **Map** - tables, columns, and links; dangling links are marked `!`.
+- **SQL** - type a statement; empty or `B` returns. Statements naming
+  `zzlinks` or `_schema_meta` are refused.
+
+Links are design notes stored in the reserved `zzlinks` table
+(`ftbl,fcol,ttbl,tcol`); MiniSQL does not enforce them. Dropping a
+column or table removes links that reference it.
+
+Safe tokens: values reject `,` `|` `)` and are trimmed; names use
+letters/digits/`-`/`_` and reject `key`, `zzlinks`, `_schema_meta`, and
+the substring `LIMIT`. Edit forms: empty keeps the current value, `@`
+clears it, `@@` stores a literal `@`. Limits: 50 tables, 40 columns per
+table, 30 links, 120-char values, 1800-char statements, 15-row pages.
+
+---
+
 ## Compatibility Notes / Simplifications
 
 MiniSQL is intentionally simple:
 
 * no quoting/escaping
-* values cannot safely contain `,` or `|`
+* values cannot safely contain `,`, `|`, or `)`
 * no JOIN/GROUP BY/subqueries
 * no type enforcement (everything is text)
 * WHERE comparisons and ORDER BY use string comparison, not numeric

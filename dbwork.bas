@@ -173,6 +173,11 @@ WB_INIT:
 WB_EXEC:
     SQL_CMD$ = "EXEC"
     GOSUB WB_CHAIN
+    IF INSTR(UCASE$(SQL_MSG$), "QUEUED") > 0 THEN
+        PRINT "TXN QUEUE ERROR" COLOR RED
+        GOSUB WB_ROLLBACK
+        SQL_STATUS = 1
+    END IF
     RETURN
 
 WB_ROLLBACK:
@@ -992,7 +997,6 @@ REM ==============================================================
 SCR_START:
     GOSUB WB_CLS
     TITLE$ = "MiniSQL Workbench"
-    FOOT$ = "N = new database   S = sample SHOP database   Q = quit"
     GOSUB WB_HEADER
     TEXT$ = ""
     GOSUB WB_LINE
@@ -1013,8 +1017,14 @@ SCR_START:
     GOSUB WB_LINE
     TEXT$ = ""
     GOSUB WB_LINE
-    GOSUB WB_FOOTER
-    INPUT "Selection: ", ANS$
+    GOSUB WB_SEP
+    TEXT$ = "  N = new database   S = sample SHOP database"
+    GOSUB WB_LINE
+    TEXT$ = "  ? = help   Q = quit"
+    GOSUB WB_LINE
+    GOSUB WB_BOT
+    PROMPT$ = "Selection: "
+    GOSUB WB_PROMPT
     IF UCASE$(ANS$) = "Q" THEN
         SCREEN = 0
         RETURN
@@ -1033,6 +1043,10 @@ SCR_START:
     END IF
     IF UCASE$(ANS$) = "S" THEN
         GOSUB SCR_SEED
+        RETURN
+    END IF
+    IF ANS$ = "?" THEN
+        GOSUB SCR_HELP
         RETURN
     END IF
     IF VAL(ANS$) >= 1 AND VAL(ANS$) <= REGN THEN
@@ -1300,7 +1314,7 @@ SCR_DESIGN:
     GOSUB WB_LINKSFOR
     GOSUB WB_CLS
     TITLE$ = "MiniSQL Workbench"
-    FOOT$ = "A=add  D n=drop  L=link  X n=unlink  T=drop  B=rows  Q=back"
+    FOOT$ = "A=add D n=drop L=link X n=unlink T=drop B=rows Q=back"
     GOSUB WB_HEADER
     TEXT$ = "  Table: " + TBL$
     GOSUB WB_LINE
@@ -1415,7 +1429,9 @@ SCR_DESIGN:
                 NEWCOLS$ = ""
                 FOR CI = 1 TO COLNT
                     IF CI <> DN THEN
-                        IF NEWCOLS$ <> "" THEN NEWCOLS$ = NEWCOLS$ + ","
+                        IF NEWCOLS$ <> "" THEN
+                            NEWCOLS$ = NEWCOLS$ + ","
+                        END IF
                         NEWCOLS$ = NEWCOLS$ + COLN$(CI)
                     END IF
                 NEXT CI
@@ -1927,7 +1943,10 @@ SCR_SQL:
         ELSE
             SQL_STMT$ = ANS$
             U$ = UCASE$(ANS$)
-            IF INSTR(U$, "ZZLINKS") > 0 OR INSTR(U$, "_SCHEMA_META") > 0 THEN
+            RESV = 0
+            IF INSTR(U$, "ZZLINKS") > 0 THEN RESV = 1
+            IF INSTR(U$, "_SCHEMA_META") > 0 THEN RESV = 1
+            IF RESV = 1 THEN
                 PRINT "RESERVED" COLOR RED
                 INPUT "Press ENTER...", X$
             ELSE
@@ -1994,4 +2013,36 @@ SCR_SEED:
     TLOADED = 0
     LLOADED = 0
     SCREEN = 2
+    RETURN
+
+REM ==============================================================
+REM  Help and limits
+REM ==============================================================
+SCR_HELP:
+    GOSUB WB_CLS
+    TITLE$ = "MiniSQL Workbench"
+    FOOT$ = "Press ENTER to return"
+    GOSUB WB_HEADER
+    TEXT$ = "  Limits:"
+    GOSUB WB_LINE
+    TEXT$ = "   50 tables, 40 columns per table, 30 links"
+    GOSUB WB_LINE
+    TEXT$ = "   values <=120 chars; statements <=1800 chars"
+    GOSUB WB_LINE
+    TEXT$ = "   row pages = 15"
+    GOSUB WB_LINE
+    TEXT$ = ""
+    GOSUB WB_LINE
+    TEXT$ = "  Values reject comma, pipe, right paren."
+    GOSUB WB_LINE
+    TEXT$ = "  Names: letters/digits/-/_ only; no LIMIT."
+    GOSUB WB_LINE
+    TEXT$ = "  Edit: empty keeps, @ clears, @@ is @."
+    GOSUB WB_LINE
+    TEXT$ = "  Links are design notes; MiniSQL does not enforce."
+    GOSUB WB_LINE
+    TEXT$ = ""
+    GOSUB WB_LINE
+    GOSUB WB_FOOTER
+    INPUT "Press ENTER...", X$
     RETURN

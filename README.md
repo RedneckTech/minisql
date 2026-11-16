@@ -89,8 +89,10 @@ projects without rewriting storage/search logic every time.
 ## Project Files
 
 - `minisql.bas` — the chainable database engine
+- `dbwork.bas` — the screen-based workbench
 - `test-runner.bas` — the 14-test regression suite
 - `verify*.bas` — behavioral verification suites
+- `test-dbwork.py`, `wbfill.bas` — workbench tests and fixture
 - `minisql-demo.bas` — interactive feature demo
 
 ---
@@ -170,6 +172,39 @@ PRINT SQL_RESULT$
 | `DESCRIBE t`                  | Show table schema          |
 | `ALTER TABLE t ADD col`       | Add column                 |
 | `ALTER TABLE t DROP col`      | Drop column                |
+
+---
+
+## Workbench (dbwork.bas)
+
+`dbwork.bas` is a screen-based designer/viewer/editor that runs at the
+BBS BASIC prompt and chains into `minisql.bas`.
+
+Run: `load "dbwork"` then `run`.
+
+Screens:
+
+- **Start** - recent databases (`dbwork.dat`), open/create, sample SHOP
+  seed, help, quit.
+- **Tables** - numbered list with columns; create/drop.
+- **Design** - columns, key, row count, links; add/drop column,
+  add/delete link, drop table.
+- **Rows** - 15-row pages; view/edit/insert/delete.
+- **Map** - every table, its columns, and all links.
+- **SQL** - any statement; refuses `zzlinks` and `_schema_meta`.
+
+Keys: `B` browses rows from the design; `Q` returns to the table list.
+In the browser `N`/`P` page, `V n` views, `E n` edits, `D n` deletes,
+and `I` inserts.
+
+Links are stored in a reserved `zzlinks` table (`ftbl,fcol,ttbl,tcol`).
+The sample seed (`S` on the start screen) creates the six-table SHOP
+example with links and sample rows.
+
+Safe tokens: values reject `,` `|` `)` and are trimmed; names use
+letters/digits/`-`/`_` and reject `key`, `zzlinks`, `_schema_meta`, and
+the substring `LIMIT`. Limits: 50 tables, 40 columns, 30 links,
+120-char values, 1800-char statements, 15-row pages.
 
 ---
 
