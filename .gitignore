@@ -7,3 +7,5 @@
 basic_manual.md
 minisql_design.txt
 __pycache__/
+*.py
+docs/
