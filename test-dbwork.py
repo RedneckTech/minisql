@@ -68,11 +68,13 @@ def parse_screens(path):
 
 
 def run_session(prog, inputs, must, must_not, final_must=None,
-                final_must_not=None, pre=None, step_wait=3.0, pages=0):
+                final_must_not=None, pre=None, step_wait=4.0, pages=0,
+                run_wait=None):
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
     stage(prog + ".bas")
     if pre:
         stage(pre + ".bas")
+    time.sleep(5.0)  # let a previous BBS session finish tearing down
 
     with open(OUT_PATH, "w") as out:
         p = subprocess.Popen(
@@ -102,6 +104,35 @@ def run_session(prog, inputs, must, must_not, final_must=None,
                     return True
             return False
 
+        def last_screen():
+            screens = parse_screens(OUT_PATH)
+            return screens[-1] if screens else ""
+
+        def has_prompt(screen):
+            for mark in ("Selection:", "SQL>", "Press ENTER", "Database name:",
+                         "Table name:", "Columns (", "New column:", "Key:",
+                         "Row number:", "Column number:", "Link number:",
+                         "From column number:", "Target table number:",
+                         "Target column number:", "Type table name",
+                         "Drop column"):
+                if mark in screen:
+                    return True
+            return False
+
+        def ascii_settle(max_wait=12.0, min_wait=2.0):
+            """Capture a changed, stable screen that has a live prompt."""
+            start = time.time()
+            before = last_screen()
+            prev = None
+            while time.time() - start < max_wait:
+                send("Ascii", 0.7)
+                cur = last_screen()
+                if (has_prompt(cur) and cur != before and prev is not None
+                        and cur == prev and time.time() - start >= min_wait):
+                    return
+                prev = cur
+            send("Ascii", 0.7)
+
         # logon and navigate to BASIC
         send("Wait(10,Output)", 1.5)
         send(xstr("admin"), 0.3)
@@ -127,8 +158,8 @@ def run_session(prog, inputs, must, must_not, final_must=None,
         send("Enter", 0.3)
         send("Wait(20,Output)", 2.0)
         send(xstr("run"), 0.5)
-        send("Enter", 0.3)
-        send("Wait(30,Output)", 3.0)
+        send("Enter", 0.5)
+        ascii_settle(max_wait=90.0, min_wait=3.0)
 
         for item in inputs:
             if item is None:
@@ -136,12 +167,15 @@ def run_session(prog, inputs, must, must_not, final_must=None,
                 continue
             if item != "":
                 send(xstr(item), 0.3)
-            send("Enter", step_wait)
-            ascii()
+            send("Enter", 0.5)
+            ascii_settle(max_wait=max(8.0, step_wait + 6))
+
+        if run_wait:
+            wait_for(run_wait, 420)
 
         for _ in range(pages):
-            send("Enter", 4.0)
-            ascii()
+            send("Enter", 0.5)
+            ascii_settle(max_wait=40.0)
 
         send("Ascii", 1.0)
         send("Quit", 0.5)
@@ -252,6 +286,7 @@ SCENARIOS["links"] = {
 SCENARIOS["linkdrop"] = {
     "prog": "dbwork",
     "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST3B_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "step_wait": 6.0,
     "inputs": ["N", "WBTEST3B", "N", "customers", "id,name", "Q",
                "N", "orders", "id,customer_id,date", "Q",
                "1", "L", "2", "2", "3", "Q",
@@ -277,7 +312,7 @@ SCENARIOS["browse"] = {
     "prog": "dbwork",
     "setup": ["rm -f ~/3270BBS/basic/admin/WBTEST7_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
     "pre": "wbfill",
-    "step_wait": 5.0,
+    "step_wait": 8.0,
     "inputs": ["N", "WBTEST7", "1", "B", "V", "1", "", "N", "N", "P", "K", "k20"],
     "must": ["Page 1", "k01", "k15", "Page 2", "k16", "Page 3", "k31", "k40", "label1", "k20"],
     "must_not": ["?SYNTAX", "?ILLEGAL", "?STRING"],
@@ -384,7 +419,8 @@ SCENARIOS["regression"] = {
     "prog": "test-runner",
     "setup": ["rm -f ~/3270BBS/basic/admin/TESTSUITE_* ~/3270BBS/basic/admin/TSTINITDB_* ~/3270BBS/basic/admin/batch.dat"],
     "inputs": [],
-    "pages": 16,
+    "run_wait": "PASS: 14",
+    "pages": 4,
     "must": ["PASS: 14", "FAIL: 0"],
     "must_not": ["?SYNTAX"],
 }
@@ -505,14 +541,15 @@ def main():
         problems = run_session(
             sc["prog"], sc["inputs"], sc["must"], sc["must_not"],
             sc.get("final_must"), sc.get("final_must_not"),
-            sc.get("pre"), sc.get("step_wait", 3.0), sc.get("pages", 0),
+            sc.get("pre"), sc.get("step_wait", 4.0), sc.get("pages", 0),
+            sc.get("run_wait"),
         )
         if problems:
             print("FAIL %s: %s" % (name, "; ".join(problems)))
             failed += 1
         else:
             print("PASS %s" % name)
-        time.sleep(3.0)
+        time.sleep(8.0)
     sys.exit(1 if failed else 0)
 
 
