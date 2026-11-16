@@ -88,6 +88,16 @@ def run_session(prog, inputs, must, must_not, final_must=None,
         def ascii(delay=0.8):
             send("Ascii", delay)
 
+        def wait_for(text, timeout=40):
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                send("Ascii", 0.5)
+                time.sleep(0.5)
+                screens = parse_screens(OUT_PATH)
+                if screens and text in screens[-1]:
+                    return True
+            return False
+
         # logon and navigate to BASIC
         send("Wait(10,Output)", 1.5)
         send(xstr("admin"), 0.3)
@@ -98,22 +108,23 @@ def run_session(prog, inputs, must, must_not, final_must=None,
         send(xstr("m"), 0.4)
         send("Enter", 3.0)
         send(xstr("b"), 0.4)
-        send("Enter", 7.0)
+        send("Enter", 0.3)
+        send("Wait(20,Output)", 2.0)
 
         if pre:
             send(xstr('load "%s"' % pre), 0.5)
-            send("Enter", 8.0)
+            send("Enter", 0.3)
+            send("Wait(20,Output)", 2.0)
             send(xstr("run"), 0.5)
-            send("Enter", 2.0)
-            time.sleep(25.0)
-            ascii()
+            send("Enter", 0.3)
+            time.sleep(40.0)
 
         send(xstr('load "%s"' % prog), 0.5)
-        send("Enter", 8.0)
+        send("Enter", 0.3)
+        send("Wait(20,Output)", 2.0)
         send(xstr("run"), 0.5)
-        send("Enter", 2.0)
-        time.sleep(2.0)
-        ascii()
+        send("Enter", 0.3)
+        send("Wait(30,Output)", 3.0)
 
         for item in inputs:
             if item is None:
@@ -319,6 +330,24 @@ SCENARIOS["sql"] = {
                "FOO", "",
                "B"],
     "must": ["COUNT=1", "COLS=label,val", "items", "zzlinks", "RESERVED", "UNSUPPORTED SQL"],
+    "must_not": ["?SYNTAX", "?ILLEGAL"],
+}
+
+SCENARIOS["seed"] = {
+    "prog": "dbwork",
+    "setup": ["rm -f ~/3270BBS/basic/admin/SHOP_* ~/3270BBS/basic/admin/dbwork.dat ~/3270BBS/basic/admin/batch.dat"],
+    "step_wait": 35.0,
+    "inputs": ["S", "M"],
+    "must": ["SHOP", "customers", "products", "orders", "order_lines",
+             "suppliers", "shipments", "Tables: 6", "Links: 5"],
+    "must_not": ["?SYNTAX", "?ILLEGAL", "?STRING"],
+}
+SCENARIOS["seedmerge"] = {
+    "prog": "dbwork",
+    "setup": [],
+    "step_wait": 35.0,
+    "inputs": ["S", "Y", "M", "B", "1"],
+    "must": ["Tables: 6", "Links: 5", "Rows: 2"],
     "must_not": ["?SYNTAX", "?ILLEGAL"],
 }
 

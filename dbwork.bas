@@ -26,6 +26,7 @@ START:
     DIM RN$(40)
     DIM RV$(40)
     DIM MAPL$(100)
+    DIM SEED$(100)
     GOSUB WB_BOOT
     SCREEN = 1
     WHILE SCREEN <> 0
@@ -587,6 +588,167 @@ WB_MAPLINES:
     RETURN
 
 
+WB_TIDX:
+    TIDX = 0
+    FOR TI = 1 TO TBNT
+        IF TBN$(TI) = TBL$ THEN TIDX = TI
+    NEXT TI
+    RETURN
+
+WB_SEEDT:
+    REM IN: TBL$, TCOLS$  OUT: TADD
+    GOSUB WB_TIDX
+    IF TIDX = 0 THEN
+        SEEDN = SEEDN + 1
+        SEED$(SEEDN) = "CREATE TABLE " + TBL$ + " ("
+        SEED$(SEEDN) = SEED$(SEEDN) + TCOLS$ + ") PK KEY"
+        TADD = 1
+    ELSE
+        SQL_STMT$ = "SELECT COUNT(*) FROM " + TBL$
+        GOSUB WB_EXEC
+        IF SQL_STATUS = 0 THEN
+            GOSUB WB_PARSECOUNT
+            IF CNT = 0 THEN
+                TADD = 1
+            ELSE
+                TADD = 0
+            END IF
+        ELSE
+            TADD = 0
+        END IF
+        X = SLEEP(0.25)
+    END IF
+    RETURN
+
+WB_SEEDR:
+    SEEDN = SEEDN + 1
+    SEED$(SEEDN) = "INSERT INTO " + TBL$ + " KEY " + KVAL$
+    SEED$(SEEDN) = SEED$(SEEDN) + " VALUES (" + VALS$ + ")"
+    RETURN
+
+WB_SEEDL:
+    SEEDN = SEEDN + 1
+    SEED$(SEEDN) = "INSERT INTO zzlinks VALUES ("
+    SEED$(SEEDN) = SEED$(SEEDN) + LFT$ + "," + LFC$ + ","
+    SEED$(SEEDN) = SEED$(SEEDN) + LTT$ + "," + LTC$ + ")"
+    RETURN
+
+WB_SEEDLINK:
+    DUP = 0
+    FOR LI = 1 TO LNKT
+        IF LNKF$(LI) = LFT$ AND LNKFK$(LI) = LFC$ THEN
+            IF LNKTT$(LI) = LTT$ AND LNKTC$(LI) = LTC$ THEN DUP = 1
+        END IF
+    NEXT LI
+    IF DUP = 0 THEN GOSUB WB_SEEDL
+    RETURN
+
+WB_SEEDBATCH:
+    SEEDN = 0
+    TBL$ = "customers"
+    TCOLS$ = "id,name,email,city"
+    GOSUB WB_SEEDT
+    IF TADD = 1 THEN
+        KVAL$ = "c01"
+        VALS$ = "c01,Alice,alice@x,Chicago"
+        GOSUB WB_SEEDR
+        KVAL$ = "c02"
+        VALS$ = "c02,Bob,bob@x,Boston"
+        GOSUB WB_SEEDR
+    END IF
+    TBL$ = "suppliers"
+    TCOLS$ = "id,name,city"
+    GOSUB WB_SEEDT
+    IF TADD = 1 THEN
+        KVAL$ = "s01"
+        VALS$ = "s01,Acme,Chicago"
+        GOSUB WB_SEEDR
+        KVAL$ = "s02"
+        VALS$ = "s02,Globex,Boston"
+        GOSUB WB_SEEDR
+    END IF
+    TBL$ = "products"
+    TCOLS$ = "id,name,price,stock,supplier_id"
+    GOSUB WB_SEEDT
+    IF TADD = 1 THEN
+        KVAL$ = "p01"
+        VALS$ = "p01,Widget,10,100,s01"
+        GOSUB WB_SEEDR
+        KVAL$ = "p02"
+        VALS$ = "p02,Gadget,20,50,s02"
+        GOSUB WB_SEEDR
+    END IF
+    TBL$ = "orders"
+    TCOLS$ = "id,customer_id,date,status"
+    GOSUB WB_SEEDT
+    IF TADD = 1 THEN
+        KVAL$ = "o01"
+        VALS$ = "o01,c01,2026-01-10,open"
+        GOSUB WB_SEEDR
+        KVAL$ = "o02"
+        VALS$ = "o02,c02,2026-01-11,shipped"
+        GOSUB WB_SEEDR
+    END IF
+    TBL$ = "order_lines"
+    TCOLS$ = "id,order_id,product_id,qty,price"
+    GOSUB WB_SEEDT
+    IF TADD = 1 THEN
+        KVAL$ = "l01"
+        VALS$ = "l01,o01,p01,2,10"
+        GOSUB WB_SEEDR
+        KVAL$ = "l02"
+        VALS$ = "l02,o01,p02,1,20"
+        GOSUB WB_SEEDR
+    END IF
+    TBL$ = "shipments"
+    TCOLS$ = "id,order_id,carrier,date"
+    GOSUB WB_SEEDT
+    IF TADD = 1 THEN
+        KVAL$ = "h01"
+        VALS$ = "h01,o02,UPS,2026-01-12"
+        GOSUB WB_SEEDR
+    END IF
+    LFT$ = "orders"
+    LFC$ = "customer_id"
+    LTT$ = "customers"
+    LTC$ = "id"
+    GOSUB WB_SEEDLINK
+    LFT$ = "order_lines"
+    LFC$ = "order_id"
+    LTT$ = "orders"
+    LTC$ = "id"
+    GOSUB WB_SEEDLINK
+    LFT$ = "order_lines"
+    LFC$ = "product_id"
+    LTT$ = "products"
+    LTC$ = "id"
+    GOSUB WB_SEEDLINK
+    LFT$ = "shipments"
+    LFC$ = "order_id"
+    LTT$ = "orders"
+    LTC$ = "id"
+    GOSUB WB_SEEDLINK
+    LFT$ = "products"
+    LFC$ = "supplier_id"
+    LTT$ = "suppliers"
+    LTC$ = "id"
+    GOSUB WB_SEEDLINK
+    IF SEEDN > 0 THEN
+        OPEN "batch.dat" FOR OUTPUT AS #5
+        PRINT #5, "BEGIN"
+        FOR SI = 1 TO SEEDN
+            PRINT #5, SEED$(SI)
+        NEXT SI
+        CLOSE #5
+        SQL_CMD$ = "COMMIT"
+        GOSUB WB_CHAIN
+    ELSE
+        SQL_STATUS = 0
+        SQL_MSG$ = "SAMPLE ALREADY PRESENT"
+    END IF
+    RETURN
+
+
 REM ==============================================================
 REM  Link metadata (zzlinks)
 REM ==============================================================
@@ -852,8 +1014,7 @@ SCR_START:
     TEXT$ = ""
     GOSUB WB_LINE
     GOSUB WB_FOOTER
-    PROMPT$ = "Selection: "
-    GOSUB WB_PROMPT
+    INPUT "Selection: ", ANS$
     IF UCASE$(ANS$) = "Q" THEN
         SCREEN = 0
         RETURN
@@ -871,8 +1032,7 @@ SCR_START:
         RETURN
     END IF
     IF UCASE$(ANS$) = "S" THEN
-        ERR$ = "SAMPLE SEED IS NOT IMPLEMENTED YET"
-        GOSUB WB_ERR
+        GOSUB SCR_SEED
         RETURN
     END IF
     IF VAL(ANS$) >= 1 AND VAL(ANS$) <= REGN THEN
@@ -1788,5 +1948,50 @@ SCR_SQL:
         END IF
         X = SLEEP(0.1)
     WEND
+    SCREEN = 2
+    RETURN
+
+REM ==============================================================
+REM  Sample SHOP seed
+REM ==============================================================
+SCR_SEED:
+    DB$ = "SHOP"
+    GOSUB WB_VALDB
+    IF DBBAD = 1 THEN
+        GOSUB WB_ERR
+        SCREEN = 1
+        RETURN
+    END IF
+    GOSUB WB_OPENDB
+    IF SQL_STATUS <> 0 THEN
+        SCREEN = 1
+        RETURN
+    END IF
+    X = SLEEP(0.25)
+    TLOADED = 0
+    GOSUB WB_LOADTABLES
+    TLOADED = 1
+    X = SLEEP(0.25)
+    IF TBNT > 0 THEN
+        PROMPT$ = "SHOP exists - merge sample?"
+        GOSUB WB_YES
+        IF YESNO = 0 THEN
+            SCREEN = 2
+            RETURN
+        END IF
+    END IF
+    LLOADED = 0
+    GOSUB WB_LOADLINKS
+    LLOADED = 1
+    X = SLEEP(0.25)
+    GOSUB WB_SEEDBATCH
+    IF SQL_STATUS <> 0 THEN
+        ERR$ = SQL_MSG$
+        GOSUB WB_ERR
+    ELSE
+        STATUS$ = "Sample seeded"
+    END IF
+    TLOADED = 0
+    LLOADED = 0
     SCREEN = 2
     RETURN
