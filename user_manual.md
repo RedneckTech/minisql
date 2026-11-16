@@ -914,15 +914,16 @@ from the BASIC prompt (`load "dbwork"`, `run`) and chains into
 
 Screens and keys:
 
-- **Start** - recent databases (`dbwork.dat`), `N` open/create, `S` seed
-  the sample SHOP database, `?` help/limits, `Q` quit.
+- **Start** - `N` open/create, `S` seed the sample SHOP database,
+  `L` list the recent databases (`dbwork.dat`), `?` help/limits, `Q`
+  quit.
 - **Tables** - numbered list with columns; `N` new table, `M` map, `S`
   SQL console, `R` refresh, `Q` quit.
 - **Design** - `A` add column, `D` drop column (prompts for the number),
-  `L` add link, `X` unlink, `T` drop table (type the name), `B` browse
-  rows, `Q` back.
+  `L` add link, `X` unlink, `R` refresh, `T` drop table (type the name),
+  `B` browse rows, `Q` back.
 - **Rows** - `N`/`P` page, `V n` view, `E n` edit, `D n` delete,
-  `I` insert, `B` back.
+  `I` insert, `K key` jump to a key, `B` back.
 - **Map** - tables, columns, and links; dangling links are marked `!`.
 - **SQL** - type a statement; empty or `B` returns. Statements naming
   `zzlinks` or `_schema_meta` are refused.
@@ -933,7 +934,7 @@ column or table removes links that reference it.
 
 Safe tokens: values reject `,` `|` `)` and are trimmed; names use
 letters/digits/`-`/`_` and reject `key`, `zzlinks`, `_schema_meta`, and
-the substring `LIMIT`. Edit forms: empty keeps the current value, `@`
+the substrings `LIMIT`, `FROM`, `WHERE`. Edit forms: empty keeps the current value, `@`
 clears it, `@@` stores a literal `@`. Limits: 50 tables, 40 columns per
 table, 30 links, 120-char values, 1800-char statements, 15-row pages.
 

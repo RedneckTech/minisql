@@ -184,8 +184,8 @@ Run: `load "dbwork"` then `run`.
 
 Screens:
 
-- **Start** - recent databases (`dbwork.dat`), open/create, sample SHOP
-  seed, help, quit.
+- **Start** - open/create, sample SHOP seed, help, quit; `L` lists the
+  recent databases kept in `dbwork.dat`.
 - **Tables** - numbered list with columns; create/drop.
 - **Design** - columns, key, row count, links; add/drop column,
   add/delete link, drop table.
@@ -193,9 +193,9 @@ Screens:
 - **Map** - every table, its columns, and all links.
 - **SQL** - any statement; refuses `zzlinks` and `_schema_meta`.
 
-Keys: `B` browses rows from the design; `Q` returns to the table list.
-In the browser `N`/`P` page, `V n` views, `E n` edits, `D n` deletes,
-and `I` inserts.
+Keys: `B` browses rows from the design; `Q` returns to the table list;
+`R` refreshes the design. In the browser `N`/`P` page, `V n` views,
+`E n` edits, `D n` deletes, `I` inserts, and `K key` jumps to a key.
 
 Links are stored in a reserved `zzlinks` table (`ftbl,fcol,ttbl,tcol`).
 The sample seed (`S` on the start screen) creates the six-table SHOP
@@ -203,7 +203,7 @@ example with links and sample rows.
 
 Safe tokens: values reject `,` `|` `)` and are trimmed; names use
 letters/digits/`-`/`_` and reject `key`, `zzlinks`, `_schema_meta`, and
-the substring `LIMIT`. Limits: 50 tables, 40 columns, 30 links,
+the substrings `LIMIT`, `FROM`, `WHERE`. Limits: 50 tables, 40 columns, 30 links,
 120-char values, 1800-char statements, 15-row pages.
 
 ---

@@ -247,11 +247,12 @@ SCENARIOS["tables"] = {
                "N", "zzlinks", "",
                "N", "bad", "credit_limit,x", "",
                "N", "bad2", "fromage,x", "",
+               "N", "bad3", "somewhere,x", "",
                "N", "bad name", "a,b", ""],
     "must": ["customers", "id,name,email,city", "orders", "id,customer_id,date,status",
              "RESERVED", "BAD COLUMN NAME", "BAD TABLE NAME"],
     "must_not": ["?SYNTAX", "?ILLEGAL"],
-    "final_must_not": ["zzlinks", "bad name", "bad2"],
+    "final_must_not": ["zzlinks", "bad name", "bad2", "bad3"],
 }
 
 SCENARIOS["design"] = {
